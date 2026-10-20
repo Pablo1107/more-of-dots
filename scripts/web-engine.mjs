@@ -19,7 +19,7 @@ for (let missing; (missing = engine.Open(replay)) !== null;) {
   if (!file) throw new Error(`No bundled map for ${missing}`);
   engine.AddMap(missing, fs.readFileSync(file));
 }
-engine.Run();
+engine.RunJsonl();
 fs.closeSync(sink);
 console.log(`${Math.round(performance.now() - started)} ms`);
 process.exit(0);

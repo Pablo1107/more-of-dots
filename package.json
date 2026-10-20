@@ -23,7 +23,7 @@
     "check:examples": "node --test scripts/dev-data.test.mjs",
     "prepare:player": "powershell.exe -NoProfile -File scripts/prepare-player.ps1",
     "check:native": "powershell.exe -NoProfile -File scripts/check-native.ps1",
-    "check:player": "node --test scripts/player-scheduling.test.mjs scripts/player-sound.test.mjs scripts/player-view.test.mjs",
+    "check:player": "node --test scripts/player-scheduling.test.mjs scripts/player-sound.test.mjs scripts/player-view.test.mjs scripts/player-frames.test.mjs",
     "check:engine": "dotnet run --project engine/tests/ReplaySim.Tests.csproj -c Release"
   },
   "dependencies": {

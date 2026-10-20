@@ -1,5 +1,6 @@
 import { invoke } from "./worker-ipc.js";
 import { FrameBuffer } from "./scheduling.js";
+import { decodeChunk } from "./frames.js";
 import { prepareMap } from "./map.js";
 import { Renderer } from "./local-renderer.js";
 import { frontLines } from "./frontline.js";
@@ -61,12 +62,25 @@ async function image(url) {
   return img;
 }
 
+// The last few decoded chunks. A read returns frames up to the end of one chunk;
+// the buffer reads on from there.
+const chunks = [];
+async function chunkAt(index) {
+  let chunk = chunks.find((c) => index >= c.start && index < c.start + c.frames.length);
+  if (!chunk) {
+    const replay = player.info;
+    chunk = await decodeChunk(await invoke("replay_chunk", { index }), replay.staticRecord);
+    if (replay !== player.info) return null;
+    chunks.unshift(chunk);
+    chunks.splice(6);
+  }
+  return chunk;
+}
 const buffer = new FrameBuffer(async (start, count) => {
-  const bytes = await invoke("replay_frames", { start, count });
-  return {
-    rows: JSON.parse(new TextDecoder().decode(bytes)),
-    bytes: bytes.byteLength,
-  };
+  const chunk = await chunkAt(start);
+  if (!chunk) return { rows: [], bytes: 0 };
+  const rows = chunk.frames.slice(start - chunk.start, start - chunk.start + count);
+  return { rows, bytes: Math.ceil((chunk.bytes * rows.length) / chunk.frames.length) };
 });
 export const bufferStats = () => buffer.stats();
 
@@ -145,6 +159,8 @@ export async function loadReplay(path) {
   onStatus("Loading replay…");
   try {
     player.info = await invoke("open_replay", { path });
+    // A chunk decoded for the previous replay is discarded once this one is open.
+    chunks.length = 0;
     sentCues = 0;
     buffer.reset(player.info.frameNumbers.length);
     player.frame = 0;

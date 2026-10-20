@@ -13,8 +13,8 @@ All code lives in this repository. The site repository holds a deploy workflow, 
 | `engine/web/ReplaySim.Web.csproj` | Compiles the `engine/repsim` sources for `browser-wasm`, without the SDL renderer, SDL text and video export |
 | `engine/web/Exports.cs` | `Open`, `AddMap` and `Run`, the entry points called from JavaScript |
 | `src/player/host.js` | Chooses the backend: Tauri commands on the desktop, `web-host.js` in a browser |
-| `src/player/web-host.js` | Answers `open_replay`, `replay_progress` and `replay_frames` in the browser and keeps frames compressed in memory |
-| `src/player/web-engine.js` | Worker that runs the WebAssembly engine and posts frames in blocks |
+| `src/player/web-host.js` | Answers `open_replay`, `replay_progress` and `replay_chunk` in the browser and keeps the engine's chunks in memory |
+| `src/player/web-engine.js` | Worker that runs the WebAssembly engine and posts its chunks |
 | `site.html`, `vite.site.config.ts` | The site's page and its Vite build |
 | `scripts/build-site.mjs` | Builds everything into `build/site` |
 | `.github/workflows/notify-site.yml` | Asks the site repository to rebuild when `VERSION` changes |
@@ -24,7 +24,7 @@ The engine sources carry three `#if BROWSER` guards in `Program.cs`. Everything 
 ## How the browser backend differs
 
 - **Simulation** runs in a worker. It is one long synchronous call, so opening another replay terminates the worker and starts a new one.
-- **Frames** arrive as JSONL, the same stream the desktop player reads from the engine's standard output. They are grouped into blocks of 60 frames and compressed with the browser's `CompressionStream`. A replay that is 240 MB as JSON takes about 6 MB.
+- **Frames** arrive as compressed chunks, the same stream the desktop player reads from the engine's standard output ([replay frame chunks](replay-frames.md)). The page keeps them as they are and the render worker decompresses one chunk at a time.
 - **Official maps** are published under `maps/` and fetched only when a replay names one. Replays with an embedded map need nothing.
 - **Player names** are drawn on a canvas by `web-host.js`, because the desktop engine renders them with SDL_ttf. They can differ by a pixel from the desktop labels.
 - **Sound** is served from `audio/` in the site repository. A build without those files plays silently.
@@ -42,11 +42,11 @@ The output is `build/site`. Pass `-- --audio <folder>` to include sound files an
 
 ## Checking parity
 
-`scripts/web-engine.mjs` runs the WebAssembly engine under Node and writes a `.repsim`. `scripts/compare-web-engine.mjs` compares two `.repsim` files record by record.
+`scripts/web-engine.mjs` runs the WebAssembly engine under Node and writes its JSONL output as a `.repsim`. `scripts/compare-web-engine.mjs` compares two `.repsim` files record by record.
 
 On 8 October 2026, 11 replays from 1,095 to 43,350 ticks produced output identical to the desktop engine in every frame. All 11 were version 1.4.1 experiment-mode replays; other modes and older versions have not been compared yet.
 
-The WebAssembly engine simulated at roughly 250 to 300 ticks per second on the development machine, against about 820 for the desktop engine. Playback starts after the first frame, about two seconds after opening.
+On 20 October 2026 the WebAssembly engine simulated a 43,350-tick replay in 24.7 s under Node, about 1,750 ticks per second, against 7.9 s for the desktop engine. Before the frame chunks and territory caches it managed 250 to 300 ticks per second. Playback starts after the first frame, about two seconds after opening.
 
 ## Deployment
 

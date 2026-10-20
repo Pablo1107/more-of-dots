@@ -8,7 +8,7 @@ Replay cards show each player's Elo rank as a small "RANK n" caption under the n
 
 The player window uses the native Windows title bar, titled with the matchup. A floating pill holds play/pause, time, the seek bar, duration, speed and fullscreen. A vertical rail on the right holds the eight layer toggles (shortcuts 1–8). All layers default to on except 7, City connections. Playback and export share these defaults; the v2 preference key applies them once on upgrade and saves subsequent choices. Each appears only while the pointer is over its own edge of the window and hides 0.45 s after it leaves; keyboard actions show the affected control briefly. Seeking keeps the play state (mpv-style): the seek bar shows a time tooltip with the offset from the playhead, scrubbing draws only the newest target, and playback continues from the release point. Arrows seek ±5 s, Up/Down ±60 s, `[`/`]` change speed. Recording is started from the library's Record action; the player then shows REC progress and Stop in the pill.
 
-Playback starts on the first simulated frames. The simulator streams to stdout; frames are indexed as they reach the cache file, and the seek bar hatches the range that is still being simulated. A simulation error ends playback at the last good frame and is reported in the player.
+Playback starts on the first simulated frames. The simulator streams to stdout; frames are indexed as each chunk arrives ([replay frame chunks](replay-frames.md)), and the seek bar hatches the range that is still being simulated. A simulation error ends playback at the last good frame and is reported in the player.
 
 ## Source and process boundaries
 
@@ -18,7 +18,7 @@ Playback starts on the first simulated frames. The simulator streams to stdout; 
 | `player.html`, `src/player/main.js`, `src/player/player.css` | Dedicated player window, transport and layer rail |
 | `src/player/client.js`, `worker.js`, `scheduling.js` | Worker bridge, latest-target scheduling and bounded read-ahead |
 | `src/player/engine.js`, `map.js`, `frontline.js`, `overlays.js`, `local-renderer.js`, `native-renderer.js` | Replay presentation, local sprite playback and native export commands |
-| `src-tauri/src/player.rs` | Conversion cache, streamed frame indexing and per-window workers |
+| `src-tauri/src/player.rs` | Streamed frame chunks and per-window workers |
 | `src-tauri/src/export.rs`, `src-tauri/src/video.rs` | Background export queue, Media Foundation H.264 encoder and MP4 fast start |
 | `engine/repsim/VideoExport.cs` | Converter: simulate, build the player's draw list (C# port), render offscreen, stream frames |
 | `engine/repsim` | Maintained independent simulation and SDL/OpenGL renderer source, plus 48 map surfaces |
@@ -27,7 +27,7 @@ Playback starts on the first simulated frames. The simulator streams to stdout; 
 
 Conversion executes the internal `ReplaySim.Standalone.exe`. Playback parses frame batches and draws reusable map/unit images in an OffscreenCanvas worker. MP4 export uses the hidden independent SDL/OpenGL worker and sends RGB24 frames to the H.264 encoder in Windows Media Foundation (`src-tauri/src/video.rs`) at 30 fps. Frames are converted to NV12 with BT.709 coefficients and written as a fast-start MP4; no encoder is bundled. No game executable, game runtime, game-version vault or injection payload is part of this path. War of Dots is not launched for playback or recording.
 
-Sessions are keyed by player window. Closing one window terminates only its workers; closing the app terminates all of them. Windows job objects also terminate workers if the host process exits unexpectedly. Completed conversion caches are shared, keyed by replay bytes, staged engine/resource hashes and any resolved external map image. Conversion and exports use temporary files and publish the result only after success. An existing destination survives conversion/encoding failure.
+Sessions are keyed by player window. Closing one window terminates only its workers; closing the app terminates all of them. Windows job objects also terminate workers if the host process exits unexpectedly. Each window keeps its simulated frames in memory, about 36 MB for a 24-minute replay, and drops them when it closes or opens another replay. Exports use temporary files and publish the result only after success. An existing destination survives conversion/encoding failure.
 
 The recorder installer, signed recorder-manifest workflow, native recorder-update module, old player frontend and recorder install/update frontend have been removed. The app release workflow stages the independent player and builds one More of Dots installer. Historical Python comparison tools remain in the repository for development; they are excluded from the application build. Superseded installer tests were retired, and desktop packaging checks enforce the independent resource boundary. Rust behavior tests cover session separation and shutdown.
 

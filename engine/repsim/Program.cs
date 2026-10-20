@@ -34,7 +34,9 @@ internal static class Program
             {
                 // Streaming lets a viewer start on the first frames while later ones are simulated.
                 using var stdout = Console.OpenStandardOutput();
-                new Simulator(replay).Write(stdout, options);
+                var streaming = new Simulator(replay);
+                if (options.BinaryFrames) streaming.WriteChunks(stdout, options);
+                else streaming.Write(stdout, options);
                 return 0;
             }
             if (Path.GetFullPath(output).Equals(Path.GetFullPath(options.Input), StringComparison.OrdinalIgnoreCase))
@@ -74,6 +76,8 @@ internal sealed class Options
     public bool Help { get; private set; }
     public string? ExportTerrain { get; private set; }
     public string? ExportContours { get; private set; }
+    /// Compact playback chunks (docs/replay-frames.md) instead of JSONL.
+    public bool BinaryFrames { get; private set; }
     public string? ExportRegions { get; private set; }
     public bool RenderState { get; private set; }
     public List<string> GameDirectories { get; } = [];
@@ -105,6 +109,16 @@ internal sealed class Options
                 case "--export-contours": o.ExportContours = Next(args, ref i, arg); break;
                 case "--export-regions": o.ExportRegions = Next(args, ref i, arg); break;
                 case "--render-state": o.RenderState = true; break;
+                case "--format":
+                    o.BinaryFrames = Next(args, ref i, arg) switch
+                    {
+                        "jsonl" => false,
+                        "binary" => true,
+                        var format => throw new ArgumentException($"Unknown output format: {format}"),
+                    };
+                    // The player draws from render state, so binary frames always carry it.
+                    o.RenderState |= o.BinaryFrames;
+                    break;
                 case "--game-dir": o.GameDirectories.Add(Next(args, ref i, arg)); break;
                 case "--export-video": o.ExportVideo = true; o.RenderState = true; break;
                 case "--width": o.Width = int.Parse(Next(args, ref i, arg), CultureInfo.InvariantCulture); break;
@@ -142,6 +156,8 @@ internal sealed class Options
           --max-frame N       stop after frame N (development/parity probes)
           --sample-every N    write every Nth state frame (default: 1)
           --no-combat         disable combat while debugging movement
+          --format F          jsonl (default) or binary: compact playback chunks with
+                              render state (docs/replay-frames.md)
           --game-dir DIR      installed game folder for official maps (repeatable)
           --export-video      write raw RGB24 video frames to stdout, progress to stderr
             --width W --height H   frame size (default 1920x1080)
@@ -781,7 +797,7 @@ internal readonly record struct Order(int UnitId, Vec[] Points);
 // chooses which of its cities produce.
 internal readonly record struct Production(int Slot, string Type, double Rate, int[]? Zone = null, double? Ratio = null);
 
-internal sealed class Simulator
+internal sealed partial class Simulator
 {
     private bool renderState;
     internal void EnableRenderState() => renderState = true;
@@ -796,6 +812,12 @@ internal sealed class Simulator
     private readonly HashSet<int> recordedDeaths = [];
     private readonly int[] casualties;
     private readonly VisualRandom visualRandom=new(1729);
+    // The territory grid is unchanged on most frames; its hash and contour JSON are
+    // reused until ReferenceTerritory replaces it.
+    private byte[]? hashedRegions;
+    private string? regionsHash;
+    private List<Vec[]>[]? writtenContours;
+    private string? contourJson;
     // Sound cues for the latest tick: units in combat, and the sides that produced
     // units since the last written frame (bit per side).
     public int FightCount { get; private set; }
@@ -808,6 +830,7 @@ internal sealed class Simulator
             if (recordedDeaths.Add(unit.Id))
             {
                 deadDots.Add(new { frame = tick, position = new[] { unit.Position.X, unit.Position.Y }, color = unit.Owner, type = unit.Type, ship = unit.Ship });
+                deaths.Add(new Death(tick, unit.Position, unit.Owner, unit.Type, unit.Ship));
                 casualties[unit.Owner]++;
             }
     }
@@ -837,7 +860,7 @@ internal sealed class Simulator
     {
         long frames;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        using (var file = File.Create(output)) frames = Write(file, options);
+        using (var file = File.Create(output)) frames = options.BinaryFrames ? WriteChunks(file, options) : Write(file, options);
         stopwatch.Stop();
         return new Result(frames, new FileInfo(output).Length, stopwatch.Elapsed);
     }
@@ -982,7 +1005,12 @@ internal sealed class Simulator
         for (int i = 0; i < replay.Map.Cities.Count; i++) { if (i != 0) writer.Write(','); WriteVec(writer, replay.Map.Cities[i]); }
         writer.Write("],\"regions_sha256\":");
         if (territory.Regions is null) writer.Write("null");
-        else WriteJsonString(writer, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(territory.Regions)).ToLowerInvariant());
+        else
+        {
+            if (!ReferenceEquals(hashedRegions, territory.Regions))
+                (hashedRegions, regionsHash) = (territory.Regions, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(territory.Regions)).ToLowerInvariant());
+            WriteJsonString(writer, regionsHash!);
+        }
         writer.Write(",\"cities\":[");
         for (int i = 0; i < replay.Map.Cities.Count; i++)
         {
@@ -997,12 +1025,20 @@ internal sealed class Simulator
         if (renderState)
         {
             writer.Write(",\"render\":{\"contours\":");
-            writer.Write(territory.Regions is null ? "[]" : JsonSerializer.Serialize(territory.Contours().Select(side => side.Select(polygon => polygon.Select(p => new[] { p.X, p.Y })))));
+            writer.Write(territory.Regions is null ? "[]" : ContourJson());
             writer.Write(",\"directions\":");
             writer.Write(JsonSerializer.Serialize(replay.Units.Where(u=>u.Active).Select(u=>new { id=u.Id, facing=new[]{u.Facing.X,u.Facing.Y}, first_visual=new[]{u.FirstVisualDirection.X,u.FirstVisualDirection.Y}, visual=new[]{u.VisualDirection.X,u.VisualDirection.Y}, first_vibration=u.FirstVibration,second_vibration=u.SecondVibration })));
             writer.Write('}');
         }
         writer.Write('}'); writer.WriteLine();
+    }
+
+    private string ContourJson()
+    {
+        var contours = territory.Contours();
+        if (!ReferenceEquals(writtenContours, contours))
+            (writtenContours, contourJson) = (contours, JsonSerializer.Serialize(contours.Select(side => side.Select(polygon => polygon.Select(p => new[] { p.X, p.Y })))));
+        return contourJson!;
     }
 
     private void ApplyOrders(int tick)

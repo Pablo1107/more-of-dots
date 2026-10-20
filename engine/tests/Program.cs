@@ -428,6 +428,35 @@ var tests = new (string, Action)[] {
         });
         Check(sim.PendingOrderCount == 0 && replay.Units[2].Path[^1].X == 500, "Deferred latest order not applied");
     }),
+    ("binary chunks send the first frame alone, then up to 60 frames from a complete one", () => {
+        var root = Fixture(); root["end"] = 125;
+        using var stream = new MemoryStream();
+        long frames = new Simulator(Read(root)).WriteChunks(stream, Options.Parse(["replay.rep", "--format", "binary"]));
+        var bytes = stream.ToArray();
+        Check(bytes.AsSpan(0, 8).SequenceEqual(Simulator.FrameMagic), "Missing chunk stream marker");
+        var counts = new List<int>();
+        int next = 0;
+        string? metadata = null;
+        for (int at = 8; at < bytes.Length;)
+        {
+            int length = BitConverter.ToInt32(bytes, at + 1);
+            var payload = bytes[(at + 5)..(at + 5 + length)];
+            if (bytes[at] == Simulator.StaticRecord) metadata = System.Text.Encoding.UTF8.GetString(payload);
+            else
+            {
+                int count = BitConverter.ToInt32(payload, 1);
+                for (int i = 0; i < count; i++) Check(BitConverter.ToInt32(payload, 5 + 4 * i) == next++, "Chunk frames out of order");
+                using var inflated = new DeflateStream(new MemoryStream(payload[(5 + 12 * count)..]), CompressionMode.Decompress);
+                var raw = new MemoryStream();
+                inflated.CopyTo(raw);
+                Check(BitConverter.ToInt32(raw.GetBuffer(), 0) == next - count, "Chunk does not start with its first frame");
+                counts.Add(count);
+            }
+            at += 5 + length;
+        }
+        Check(JsonNode.Parse(metadata!)!["rendered_map_surface"] is not null, "Static record lacks the rendered map");
+        Check(frames == 126 && counts.SequenceEqual([1, 60, 60, 5]), $"Unexpected chunks {string.Join(",", counts)}");
+    }),
 };
 foreach (var (name, test) in tests) { test(); Console.WriteLine($"PASS {name}"); }
 Console.WriteLine($"{tests.Length} replay compatibility tests passed.");

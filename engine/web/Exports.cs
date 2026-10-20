@@ -4,7 +4,7 @@ using System.Runtime.Versioning;
 namespace ReplaySim.Standalone;
 
 /// The browser entry points. The page supplies the replay and any official map it
-/// names, then receives the same JSONL stream the desktop player reads from stdout.
+/// names, then receives the same chunk stream the desktop player reads from stdout.
 [SupportedOSPlatform("browser")]
 internal static partial class WebEngine
 {
@@ -36,14 +36,28 @@ internal static partial class WebEngine
         return null;
     }
 
-    /// Simulates the opened replay, passing the output to the page as it is written.
+    /// Simulates the opened replay, passing playback chunks (docs/replay-frames.md)
+    /// to the page as they are written.
     [JSExport]
     internal static void Run()
     {
+        using var output = new HostStream();
+        new Simulator(Take()).WriteChunks(output, Options.Parse([Input, "--format", "binary"]));
+    }
+
+    /// The desktop engine's JSONL output, for parity checks (scripts/web-engine.mjs).
+    [JSExport]
+    internal static void RunJsonl()
+    {
+        using var output = new HostStream();
+        new Simulator(Take()).Write(output, Options.Parse([Input, "--render-state"]));
+    }
+
+    private static Replay Take()
+    {
         var opened = replay ?? throw new InvalidOperationException("Open a replay first.");
         replay = null;
-        using var output = new HostStream();
-        new Simulator(opened).Write(output, Options.Parse([Input, "--render-state"]));
+        return opened;
     }
 
     private sealed class HostStream : Stream

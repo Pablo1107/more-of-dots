@@ -2661,12 +2661,10 @@ pub fn run() {
         .manage(export::VideoExports::default())
         .setup(|app| {
             let local = app.path().app_cache_dir()?;
-            let cache = storage::ReplayCache::new(local)?;
-            app.manage(cache.clone());
-            // Opening a replay prunes immediately; this also trims browser caches.
+            let storage = storage::AppStorage::new(local)?;
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(10));
-                cache.maintain();
+                storage.maintain();
             });
             let warm_app = app.handle().clone();
             std::thread::spawn(move || warm_replay_listing(&warm_app));
@@ -2729,7 +2727,7 @@ pub fn run() {
             current_replay_launch_request,
             open_replay_window,
             player::open_replay,
-            player::replay_frames,
+            player::replay_chunk,
             player::render_frame,
             export::export_replay_videos,
             export::cancel_replay_exports,

@@ -1,5 +1,7 @@
 // The browser's answer to the desktop player commands: the WebAssembly engine
-// simulates in a worker and its frames are kept, compressed, in memory.
+// simulates in a worker and its chunks are kept in memory as the engine wrote them.
+import { chunkHeader } from "./frames.js";
+
 const base = new URL(import.meta.env.BASE_URL, location.href).href;
 const files = new Map();
 
@@ -60,9 +62,6 @@ function nameLabel(text, side) {
   return { text, size: [canvas.width, canvas.height], image: canvas.toDataURL("image/png").split(",")[1] };
 }
 
-const piped = (bytes, stream) =>
-  new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer().then((buffer) => new Uint8Array(buffer));
-
 let replay = null;
 class Replay {
   constructor(path) {
@@ -70,9 +69,8 @@ class Replay {
     this.frames = [];
     this.fighting = [];
     this.produced = [];
-    // Each block holds consecutive frames as JSON rows; `ends` are their offsets.
-    this.blocks = [];
-    this.open = [];
+    // Each chunk is `{ start, payload }`: the index of its first frame and its bytes.
+    this.chunks = [];
     this.complete = false;
     this.error = null;
     this.started = new Promise((resolve) => (this.ready = resolve));
@@ -100,20 +98,14 @@ class Replay {
         team.map((label) => (label.image ? label : nameLabel(label.text, side))),
       );
       this.staticRecord = record;
-    } else if (data.kind === "frames") {
-      if (data.frames[0] <= this.frames.at(-1)) return this.finish("Replay frames must increase.");
-      const block = { start: this.frames.length, ends: data.ends, raw: data.buffer, packed: null };
-      this.blocks.push(block);
-      for (let i = 0; i < data.frames.length; i++) {
-        this.frames.push(data.frames[i]);
-        this.fighting.push(data.fighting[i]);
-        this.produced.push(data.produced[i]);
-      }
-      // A replay is hundreds of megabytes of JSON; only the blocks in use stay unpacked.
-      void piped(block.raw, new CompressionStream("deflate-raw")).then((packed) => {
-        block.packed = packed;
-        if (!this.open.includes(block)) block.raw = null;
-      });
+    } else if (data.kind === "chunk") {
+      const header = chunkHeader(data.payload);
+      if (header.frames[0] <= this.frames.at(-1) || header.frames.some((frame, i) => i && frame <= header.frames[i - 1]))
+        return this.finish("Replay frames must increase.");
+      this.chunks.push({ start: this.frames.length, payload: data.payload });
+      this.frames.push(...header.frames);
+      this.fighting.push(...header.fighting);
+      this.produced.push(...header.produced);
     } else if (data.kind === "done") {
       if (!data.error && !(this.staticRecord && this.frames.length))
         data.error = "This file has no playable frames or map metadata.";
@@ -130,14 +122,7 @@ class Replay {
   }
   close() {
     this.finish("Player closed.");
-    this.blocks = [];
-    this.open = [];
-  }
-  async unpacked(block) {
-    const raw = block.raw ?? (block.raw = await piped(block.packed, new DecompressionStream("deflate-raw")));
-    this.open = [block, ...this.open.filter((other) => other !== block)];
-    for (const other of this.open.splice(4)) if (other.packed) other.raw = null;
-    return raw;
+    this.chunks = [];
   }
   info() {
     if (!(this.staticRecord && this.frames.length)) throw new Error(this.error);
@@ -161,35 +146,20 @@ class Replay {
       error: this.error,
     };
   }
-  /// Up to `count` rows from `start` as a JSON array, within the playback buffer limit.
-  async rows(start, count, limit = 8 << 20) {
-    const end = Math.min(start + Math.min(count, 120), this.frames.length),
-      parts = [];
-    let size = 2;
-    for (let index = start; index < end; ) {
-      const block = this.blocks.findLast((candidate) => candidate.start <= index);
-      if (!block) throw new Error("Open a replay first.");
-      const raw = await this.unpacked(block);
-      for (let row = index - block.start; row < block.ends.length && index < end; row++, index++) {
-        const bytes = raw.subarray(row ? block.ends[row - 1] : 0, block.ends[row]);
-        if (bytes.length + 2 > limit) throw new Error("This replay frame exceeds the playback buffer limit.");
-        if (size + bytes.length + 1 > limit) {
-          index = end;
-          break;
-        }
-        parts.push(bytes);
-        size += bytes.length + 1;
-      }
+  /// The chunk holding frame `index`, after the index of its first frame.
+  chunk(index) {
+    let low = 0,
+      high = this.chunks.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.chunks[middle].start <= index) low = middle + 1;
+      else high = middle;
     }
-    const result = new Uint8Array(parts.reduce((total, bytes) => total + bytes.length + 1, 1) + (parts.length ? 0 : 1));
-    let offset = 0;
-    result[offset++] = 91;
-    parts.forEach((bytes, index) => {
-      if (index) result[offset++] = 44;
-      result.set(bytes, offset);
-      offset += bytes.length;
-    });
-    result[offset] = 93;
+    const chunk = this.chunks[low - 1];
+    if (!chunk || index >= this.frames.length) throw new Error("This replay frame is not available yet.");
+    const result = new Uint8Array(4 + chunk.payload.length);
+    new DataView(result.buffer).setUint32(0, chunk.start, true);
+    result.set(chunk.payload, 4);
     return result.buffer;
   }
 }
@@ -204,6 +174,6 @@ export async function invoke(command, args = {}) {
   }
   if (!replay) throw new Error("Open a replay first.");
   if (command === "replay_progress") return replay.progress(args.since);
-  if (command === "replay_frames") return replay.rows(args.start, args.count);
+  if (command === "replay_chunk") return replay.chunk(args.index);
   throw new Error(`${command} is not available in the browser.`);
 }
