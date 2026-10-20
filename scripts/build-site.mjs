@@ -1,15 +1,19 @@
 // Builds the hosted replay player into build/site: the player page, the
 // WebAssembly engine compiled from engine/repsim, and the official maps.
-//   node scripts/build-site.mjs [--audio <folder>] [--skip-engine]
-// --audio copies the site's sound files, which are kept outside this repository.
+//   node scripts/build-site.mjs [--audio <folder>] [--tournaments <folder>] [--skip-engine]
+// --audio copies the site's sound files and --tournaments publishes its tournaments
+// (scripts/tournaments.mjs). Both are kept outside this repository.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { publishTournaments } from './tournaments.mjs';
 
 const project = path.resolve(import.meta.dirname, '..');
 const at = (...parts) => path.join(project, ...parts);
 const args = process.argv.slice(2);
-const audio = args.includes('--audio') ? path.resolve(args[args.indexOf('--audio') + 1]) : null;
+const folder = (flag) => (args.includes(flag) ? path.resolve(args[args.indexOf(flag) + 1]) : null);
+const audio = folder('--audio');
+const tournaments = folder('--tournaments');
 const run = (command, parameters) => execFileSync(command, parameters, { cwd: project, stdio: 'inherit' });
 
 const engine = at('build/wasm-engine');
@@ -34,6 +38,11 @@ for (const file of fs.readdirSync(maps, { recursive: true }).filter(name => name
   fs.copyFileSync(path.join(maps, file), target);
 }
 if (audio) fs.cpSync(audio, path.join(site, 'audio'), { recursive: true });
+if (tournaments) publishTournaments(tournaments, path.join(site, 'tournaments'));
+else {
+  fs.mkdirSync(path.join(site, 'tournaments'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'tournaments/index.json'), '[]');
+}
 
 const git = parameters => execFileSync('git', parameters, { cwd: project, encoding: 'utf8' }).trim();
 fs.writeFileSync(path.join(site, 'version.json'), JSON.stringify({

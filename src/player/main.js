@@ -6,9 +6,14 @@ import { initializeEngine, player, loadReplay, paint } from "./client.js";
 import { displayOptions } from "./overlays.js";
 import { ReplaySound } from "./sound.js";
 
+// The hosted site shows the player only on its watch page. It sets these hooks:
+// `active` says whether the player is on screen, `files` takes dropped or chosen
+// replays so the site can keep them, and `back` leaves the player.
+export const embedding = { active: () => true, files: null, back: null };
+
 // Pointer gestures belong to the player, including when they cross labels or artwork.
-document.addEventListener("selectstart", (event) => event.preventDefault());
-document.addEventListener("dragstart", (event) => event.preventDefault());
+document.addEventListener("selectstart", (event) => embedding.active() && event.preventDefault());
+document.addEventListener("dragstart", (event) => embedding.active() && event.preventDefault());
 
 const icon = (paths, className = "") =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" class="${className}">${paths}</svg>`;
@@ -19,6 +24,7 @@ const icons = {
     "solid",
   ),
   close: icon('<path d="m6 6 12 12M18 6 6 18"/>'),
+  back: icon('<path d="M15 5.5 8.5 12l6.5 6.5"/>'),
   full: icon('<path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/>'),
   volume: icon('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
   muted: icon('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="m16 10 4.5 4.5m0-4.5L16 14.5"/>'),
@@ -40,10 +46,11 @@ const layerIcons = {
 const speeds = [0.25, 0.5, 1, 2, 4, 8, 16];
 const speedLabel = (speed) => `${speed}×`;
 document.querySelector("#player-ui").innerHTML = `
-  <section id="welcome" class="welcome"><h1 id="welcome-title">Open a replay</h1><p id="status" role="status">Choose a War of Dots replay to watch.</p><button id="open" class="primary">Open replay</button></section>
+  <section id="welcome" class="welcome"><h1 id="welcome-title">Open a replay</h1><p id="status" role="status">Choose a War of Dots replay to watch.</p><button id="open" class="primary">Open replay</button><button id="welcome-back" hidden>Back</button></section>
   <section id="loading" class="loading" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading replay…</span></section>
   <nav id="layers" class="rail glass" aria-label="Layers" hidden></nav>
   <section id="controls" class="bar" aria-label="Replay controls" hidden>
+    <button id="back" class="icon-button" title="Back" aria-label="Back" hidden>${icons.back}</button>
     <button id="play" class="icon-button" title="Play / pause (Space)" aria-label="Play">${icons.play}</button>
     <span id="time" class="time">0:00</span>
     <div id="seek" class="seek" role="slider" tabindex="0" aria-label="Replay position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
@@ -401,8 +408,13 @@ $("seek").addEventListener("lostpointercapture", endScrub);
 $("seek").addEventListener("pointerleave", () => {
   if (!scrubbing) $("ghost").hidden = $("tip").hidden = true;
 });
+// A replay asked for while another is loading opens once that one is ready.
+let nextPath = null;
 async function openPath(path) {
-  if (opening) return;
+  if (opening) {
+    nextPath = path;
+    return;
+  }
   opening = true;
   pause();
   showScreen("loading");
@@ -422,15 +434,27 @@ async function openPath(path) {
     await paint(0);
     await new Promise((resolve) => requestAnimationFrame(() => resolve()));
     showScreen("player");
-    toggle();
+    // The site may have left the player while the replay loaded.
+    if (embedding.active()) toggle();
     flash("bar", 2500);
   } catch (error) {
     showScreen("welcome", "Couldn't open this replay", String(error));
   } finally {
     opening = false;
+    if (nextPath) {
+      const path = nextPath;
+      nextPath = null;
+      void openPath(path);
+    }
   }
 }
 async function chooseReplay() {
+  if (embedding.files) {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept: ".rep", multiple: true });
+    input.onchange = () => input.files.length && embedding.files([...input.files]);
+    input.click();
+    return;
+  }
   const path = await pickReplay();
   if (path) await openPath(path);
 }
@@ -479,6 +503,7 @@ function animate(now) {
   requestAnimationFrame(animate);
 }
 $("play").onclick = toggle;
+$("back").onclick = $("welcome-back").onclick = () => embedding.back?.();
 $("open").onclick = () => chooseReplay().catch(showError);
 $("open-replay").onclick = () => chooseReplay().catch(showError);
 $("speed").onclick = () => speedMenu($("speed-menu").hidden);
@@ -548,6 +573,7 @@ addEventListener("pointercancel", () => { dragOrigin = null; });
 addEventListener("blur", () => { dragOrigin = null; });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 addEventListener("keydown", (event) => {
+  if (!embedding.active()) return;
   const editing =
     /^(INPUT|SELECT|TEXTAREA)$/.test(event.target?.tagName) &&
     event.target?.type !== "checkbox";
@@ -727,7 +753,7 @@ if (isTauri())
 else {
   // The frame shows only while a file is over the window. Entering a child
   // element fires dragenter before the dragleave of the one just left.
-  const carriesFile = (event) => event.dataTransfer?.types.includes("Files");
+  const carriesFile = (event) => embedding.active() && event.dataTransfer?.types.includes("Files");
   let dragDepth = 0;
   const dropFrame = (depth) => ($("drop").hidden = (dragDepth = depth) <= 0);
   addEventListener("dragenter", (event) => carriesFile(event) && dropFrame(dragDepth + 1));
@@ -735,9 +761,11 @@ else {
   addEventListener("dragover", (event) => event.preventDefault());
   addEventListener("drop", async (event) => {
     event.preventDefault();
+    if (!embedding.active()) return;
     dropFrame(0);
-    const file = event.dataTransfer?.files[0];
-    if (file) void openPath(await addFile(file));
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (embedding.files) embedding.files(files);
+    else if (files[0]) void openPath(await addFile(files[0]));
   });
   // A link can name the replay to play: ?replay=<url>
   const linked = new URLSearchParams(location.search).get("replay");

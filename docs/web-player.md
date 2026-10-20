@@ -16,7 +16,11 @@ All code lives in this repository. The site repository holds a deploy workflow, 
 | `src/player/web-host.js` | Answers `open_replay`, `replay_progress` and `replay_chunk` in the browser and keeps the engine's chunks in memory |
 | `src/player/web-engine.js` | Worker that runs the WebAssembly engine and posts its chunks |
 | `site.html`, `vite.site.config.ts` | The site's page and its Vite build |
+| `src/site/main.js` | The site's pages around the player: home, tournament brackets and replays, and the routes that link to them |
+| `src/site/library.js` | Replays a visitor adds, kept in the browser's IndexedDB |
+| `src/site/bracket.js` | Lays out a Challonge double elimination bracket |
 | `scripts/build-site.mjs` | Builds everything into `build/site` |
+| `scripts/tournaments.mjs` | Publishes the tournament folders from the site repository |
 | `.github/workflows/notify-site.yml` | Asks the site repository to rebuild when `VERSION` changes |
 
 The engine sources carry three `#if BROWSER` guards in `Program.cs`. Everything else in `engine/repsim` is compiled unchanged.
@@ -30,6 +34,37 @@ The engine sources carry three `#if BROWSER` guards in `Program.cs`. Everything 
 - **Sound** is served from `audio/` in the site repository. A build without those files plays silently.
 - **Not available**: video export, reference snapshots and the QA capture options, which use the native renderer.
 
+## Pages and links
+
+Every page has its own address after the `#`, so any view can be shared:
+
+| Address | Page |
+|---|---|
+| `#/` | Home: drop a .rep, the visitor's replays, and the tournaments |
+| `#/girth-tournament-3` | A tournament's bracket |
+| `#/girth-tournament-3/105` | The bracket with match 105's replays open |
+| `#/girth-tournament-3/replays` | Every replay of a tournament, grouped by match |
+| `#/girth-tournament-3/105/6-city` | Watch the 6 City game of match 105 |
+| `#/mine/<id>` | Watch a replay kept in this browser. It only works on the device that added it. |
+
+The player shows only on the watch pages. The site sets hooks on `embedding` in `src/player/main.js`. While another page shows, the player ignores its keyboard shortcuts and file drops. Files dropped on any page are kept in the visitor's library. The player's back button returns to the page the visitor came from.
+
+Replays a visitor adds never leave the browser. They are stored in IndexedDB under the start of their SHA-256, so adding the same file twice keeps one copy.
+
+## Tournaments
+
+Tournaments live in the site repository under `tournaments/<id>/`: the tournament's `.rep` files and a hand-written `tournament.json`. That file holds:
+- the name, format and start date
+- the final results
+- every player with their bracket name and seed, plus their in-game `username` when it is known
+- every match copied from Challonge
+
+The build assigns each replay to the match its two players played, matching the replay's usernames to the players' `username` fields. A replay whose players met more than once, such as a grand final and its reset, names its match in an optional `"replays": { "file.rep": 113 }` object. The build stops with a message when a replay's players are unknown or its match is ambiguous.
+
+Map names come from the number of cities: 12 cities is "6 City". The order the games of a match were played in is not recorded, so a match lists its replays by map.
+
+Pages show bracket names. When a player's in-game username is known and differs, it follows in brackets, as in `samuel i (clunch)`.
+
 ## Building locally
 
 Requires .NET SDK 9 with the `wasm-tools` workload (`dotnet workload install wasm-tools`).
@@ -38,7 +73,7 @@ Requires .NET SDK 9 with the `wasm-tools` workload (`dotnet workload install was
 npm run build:site
 ```
 
-The output is `build/site`. Pass `-- --audio <folder>` to include sound files and `-- --skip-engine` to reuse the last engine build. Set `DOTNET` to use a specific `dotnet` executable.
+The output is `build/site`. Pass `-- --audio <folder>` to include sound files, `-- --tournaments <folder>` to publish tournaments, and `-- --skip-engine` to reuse the last engine build. Set `DOTNET` to use a specific `dotnet` executable.
 
 ## Checking parity
 
