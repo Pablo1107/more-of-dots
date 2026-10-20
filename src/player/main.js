@@ -37,7 +37,7 @@ const layerIcons = {
   produce: '<path d="M3 20V10l6 4v-4l6 4V5h5v15Z"/>',
   players: '<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
 };
-const speeds = [0.25, 0.5, 1, 2, 4, 8];
+const speeds = [0.25, 0.5, 1, 2, 4, 8, 16];
 const speedLabel = (speed) => `${speed}×`;
 document.querySelector("#player-ui").innerHTML = `
   <section id="welcome" class="welcome"><h1 id="welcome-title">Open a replay</h1><p id="status" role="status">Choose a War of Dots replay to watch.</p><button id="open" class="primary">Open replay</button></section>

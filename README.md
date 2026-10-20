@@ -1,6 +1,6 @@
 # More of Dots
 
-[Download More of Dots 2.0.1 for Windows (NSIS installer)](https://github.com/aexer0e/more-of-dots/releases/download/v2.0.1/More.of.Dots_2.0.1_x64-setup.exe)
+[Download More of Dots 2.0.2 for Windows (NSIS installer)](https://github.com/aexer0e/more-of-dots/releases/download/v2.0.2/More.of.Dots_2.0.2_x64-setup.exe)
 
 Version 2.0.0 includes an independent replay player and video exporter in the desktop app.
 
