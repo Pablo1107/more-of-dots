@@ -5,7 +5,17 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $engineProject = Join-Path $projectRoot 'engine/repsim/ReplaySim.Standalone.csproj'
 $destination = Join-Path $projectRoot 'src-tauri/resources/player'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
-dotnet publish $engineProject -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $destination
+# DOTNET names a specific dotnet.exe, as for build:site. Otherwise the first one with an
+# SDK: the dotnet on PATH may be a runtime-only install, and dotnet-install.ps1 puts the
+# SDK in the user profile without adding it to PATH.
+$dotnet = $env:DOTNET
+if (-not $dotnet) {
+  $candidates = @((Get-Command dotnet -ErrorAction SilentlyContinue).Source, (Join-Path $env:USERPROFILE '.dotnet/dotnet.exe')) |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  $dotnet = $candidates | Where-Object { & $_ --list-sdks 2>$null } | Select-Object -First 1
+  if (-not $dotnet) { throw 'No .NET SDK found. Install the .NET 9 SDK, or set DOTNET to its dotnet.exe.' }
+}
+& $dotnet publish $engineProject -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $destination
 if ($LASTEXITCODE -ne 0) { throw 'Independent replay engine compilation failed.' }
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'engine/native') -Filter '*.dll' | Copy-Item -Destination $destination -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'engine/native/NOTICES.md') -Destination $destination -Force
