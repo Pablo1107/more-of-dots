@@ -7,9 +7,10 @@
 //   #/<tournament>/replays  every replay of the tournament
 //   #/<tournament>/<match>/<map>  watch a tournament game
 //   #/mine/<id>             watch a replay kept in this browser
-import "./site.css";
 import { embedding } from "../player/main.js";
 import { addFile } from "../player/host.js";
+// After the player's styles, so the site's win where both style an element.
+import "./site.css";
 import { addReplay, getReplay, listReplays, removeReplay } from "./library.js";
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
@@ -31,7 +32,78 @@ const icons = {
   players: icon(15, '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
   bracket: icon(15, '<path d="M4 5h5v6h6M4 19h5v-6M15 11v8h5"/>'),
   calendar: icon(15, '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+  chevron: icon(14, '<path d="m6 9 6 6 6-6"/>'),
 };
+
+// Long names shrink until they fit their card or match.
+function fitNames() {
+  for (const element of site.querySelectorAll(".versus, .match .name span, .fit")) {
+    element.style.fontSize = "";
+    if (!element.clientWidth) continue;
+    let size = parseFloat(getComputedStyle(element).fontSize);
+    while (element.scrollWidth > element.clientWidth && size > 9) element.style.fontSize = `${(size -= 0.5)}px`;
+  }
+}
+let fitFrame;
+addEventListener("resize", () => {
+  cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(fitNames);
+});
+void document.fonts?.ready.then(fitNames);
+
+// Menus in the style of the player's speed menu, in place of the browser's selects.
+const dropdowns = new Map();
+function dropdown(id, label, options, value, change) {
+  dropdowns.set(id, change);
+  const current = options.find(([key]) => key === value) ?? options[0];
+  return `<div class="dropdown" data-dropdown="${id}"><span class="dropdown-label" id="${id}-label">${escape(label)}</span>
+    <button type="button" class="dropdown-button" aria-haspopup="menu" aria-expanded="false" aria-labelledby="${id}-label ${id}-value"><span id="${id}-value">${escape(current[1])}</span>${icons.chevron}</button>
+    <div class="dropdown-menu" role="menu" hidden>${options.map(([key, text]) =>
+      `<button type="button" role="menuitemradio" data-value="${key}" aria-checked="${key === current[0]}">${escape(text)}</button>`).join("")}</div></div>`;
+}
+function closeDropdowns(except) {
+  for (const element of site.querySelectorAll(".dropdown")) {
+    if (element === except) continue;
+    element.querySelector(".dropdown-menu").hidden = true;
+    element.querySelector(".dropdown-button").setAttribute("aria-expanded", "false");
+  }
+}
+site.addEventListener("click", (event) => {
+  const element = event.target.closest(".dropdown");
+  closeDropdowns(element);
+  if (!element) return;
+  const menu = element.querySelector(".dropdown-menu"),
+    button = element.querySelector(".dropdown-button"),
+    option = event.target.closest("[data-value]");
+  if (option) {
+    for (const item of menu.querySelectorAll("[data-value]")) item.setAttribute("aria-checked", String(item === option));
+    button.querySelector("span").textContent = option.textContent;
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    button.focus();
+    dropdowns.get(element.dataset.dropdown)?.(option.dataset.value);
+  } else if (event.target.closest(".dropdown-button")) {
+    menu.hidden = !menu.hidden;
+    button.setAttribute("aria-expanded", String(!menu.hidden));
+    if (!menu.hidden) menu.querySelector('[aria-checked="true"]')?.focus();
+  }
+});
+site.addEventListener("keydown", (event) => {
+  const element = event.target.closest?.(".dropdown");
+  const menu = element?.querySelector(".dropdown-menu");
+  if (!menu || menu.hidden) return;
+  const items = [...menu.querySelectorAll("[data-value]")],
+    at = items.indexOf(document.activeElement);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdowns();
+    element.querySelector(".dropdown-button").focus();
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
+  }
+});
 
 const duration = (frames) => {
   const s = Math.floor(frames / 30);
@@ -140,12 +212,16 @@ function showHome() {
       <section class="dropzone" aria-label="Add replays">${icons.file(52)}
         <h1>Drop a .rep to watch it</h1>
         <p>It starts playing in a few seconds and is kept in this browser, so you can come back to it. Nothing is uploaded.</p>
-        <button type="button" class="btn primary large" id="choose">Choose files</button>
+        <button type="button" class="btn btn-primary large" id="choose">Choose files</button>
       </section>
       <section class="stack" aria-labelledby="mine-title">
         <div class="section-head"><h2 id="mine-title">Your replays</h2><span class="spacer"></span>
           <label class="search">${icons.search}<span class="sr-only">Search players</span><input type="search" id="mine-search" placeholder="Search players"></label>
-          <label class="select">Sort<select id="mine-sort"><option value="added">Recently added</option><option value="longest">Longest</option><option value="shortest">Shortest</option></select></label>
+          ${dropdown("mine-sort", "Sort", [["added", "Recently added"], ["longest", "Longest"], ["shortest", "Shortest"]], home.sort, (sort) => {
+            home.sort = sort;
+            home.page = 0;
+            renderMine();
+          })}
         </div>
         <div id="mine"></div>
       </section>
@@ -155,14 +231,8 @@ function showHome() {
   if (fresh) {
     $("#choose").onclick = choose;
     $("#mine-search").value = home.query;
-    $("#mine-sort").value = home.sort;
     $("#mine-search").oninput = (event) => {
       home.query = event.target.value;
-      home.page = 0;
-      renderMine();
-    };
-    $("#mine-sort").onchange = (event) => {
-      home.sort = event.target.value;
       home.page = 0;
       renderMine();
     };
@@ -205,8 +275,8 @@ async function renderMine() {
       <a href="#/mine/${r.id}" aria-label="Watch ${escape(r.players.join(" vs "))}, ${duration(r.frames)}">
         ${r.thumb ? `<img src="${escape(r.thumb)}" alt="">` : ""}<span class="shade"></span>
         <span class="versus">${versus(r.players)}</span>
-        <span class="chip bl">${r.version ? `v${escape(r.version)} · ` : ""}${kilobytes(r.size)}</span>
-        <span class="chip br">${duration(r.frames)}</span>
+        <span class="tag bl">${r.version ? `v${escape(r.version)} · ` : ""}${kilobytes(r.size)}</span>
+        <span class="tag br">${duration(r.frames)}</span>
       </a>
       <button type="button" class="rep-remove" data-remove="${r.id}" aria-label="Remove ${escape(r.players.join(" vs "))} from this browser" title="Remove from this browser">${icons.close(14)}</button>
     </div>`;
@@ -221,6 +291,7 @@ async function renderMine() {
             <button type="button" class="btn" data-page="${home.page - 1}"${home.page === 0 ? " disabled" : ""}>Previous</button>${numbers}
             <button type="button" class="btn" data-page="${home.page + 1}"${home.page === pages - 1 ? " disabled" : ""}>Next</button></div></nav>`
         : ""}`;
+  fitNames();
 }
 
 // Published tournaments.
@@ -314,7 +385,7 @@ function popover(t, m, className, style = "") {
       <a class="close" href="#/${t.id}" aria-label="Close">${icons.close(14)}</a></div>
     ${games.length ? `<ul class="map-list">${games.map((r) => `<li><a href="#/${t.id}/${m.id}/${r.slug}">
         ${r.thumb ? `<img src="${base}tournaments/${t.id}/${escape(r.thumb)}" alt="">` : ""}
-        <span class="what"><b>${escape(r.map ?? "Unknown map")}</b><span>${versus(r.names)}</span><span class="note">${duration(r.frames)}${r.version ? ` · v${escape(r.version)}` : ""}</span></span>
+        <span class="what"><b>${escape(r.map ?? "Unknown map")}</b><span class="fit">${versus(r.names)}</span><span class="note">${duration(r.frames)}${r.version ? ` · v${escape(r.version)}` : ""}</span></span>
         <span class="play-dot" aria-hidden="true">${icons.play(12)}</span></a></li>`).join("")}</ul>
       <span class="note">The order the maps were played in is not recorded.</span>`
       : '<p class="note">No replays were saved for this match.</p>'}
@@ -345,7 +416,7 @@ function bracketBoards(t) {
     for (const b of laid.boxes) positions.set(b.match.id, { side, x: b.x, y: b.y, width });
     return `<section class="bracket-side" aria-label="${title}"><h2>${title}</h2><div class="board-scroll"><div class="board" data-board="${side}" style="width:${width}px;height:${laid.height}px">
       <div class="strip"></div>
-      ${heads.map((h, i) => `<div class="head" style="left:${box.left - box.gap / 2 + i * step}px;width:${step}px">${escape(h)}</div>`).join("")}
+      ${heads.map((h, i) => `<div class="round-head" style="left:${box.left - box.gap / 2 + i * step}px;width:${step}px">${escape(h)}</div>`).join("")}
       ${laid.lines.map((l) => `<span class="line" style="left:${Math.round(l.x)}px;top:${Math.round(l.y)}px;width:${Math.round(l.w)}px;height:${Math.round(l.h)}px"></span>`).join("")}
       ${laid.boxes.map((b) => `<span class="number" style="left:${b.x - 25}px;top:${Math.round(b.y - 7)}px">${b.match.id}</span>${matchBox(t, b.match, `left:${b.x}px;top:${Math.round(b.y - box.height / 2)}px`, null)}`).join("")}
     </div></div></section>`;
@@ -398,11 +469,15 @@ async function showBracket(id, open) {
         round = event.target.closest("[data-round]");
       if (side) mobile.side = side.dataset.side;
       if (round) mobile.round = Number(round.dataset.round);
-      if (side || round) renderRounds(t);
+      if (side || round) {
+        renderRounds(t);
+        fitNames();
+      }
     };
   }
   renderRounds(t);
   showOpen(t, open, fresh);
+  fitNames();
 }
 /// Opens one match's replays beside it, or closes them, without redrawing the bracket.
 function showOpen(t, open, scroll) {
@@ -430,7 +505,10 @@ async function showReplays(id) {
     `${tournamentHead(t, "replays")}<main class="groups">
       <div class="section-head replay-tools">
         <label class="search">${icons.search}<span class="sr-only">Search players</span><input type="search" id="group-search" placeholder="Search players"></label>
-        ${t.sides.losers.length ? `<label class="select">Bracket<select id="group-side"><option value="all">Winners and losers</option><option value="winners">Winners only</option><option value="losers">Losers only</option></select></label>` : ""}
+        ${t.sides.losers.length ? dropdown("group-side", "Bracket", [["all", "Winners and losers"], ["winners", "Winners only"], ["losers", "Losers only"]], filters.side, (side) => {
+          filters.side = side;
+          renderGroups(t);
+        }) : ""}
         <span class="spacer"></span><span class="note">${t.replays.length} replays from ${t.games.size} matches · map order is not recorded</span>
       </div>
       <div id="groups" class="groups-list"></div></main>`);
@@ -440,14 +518,6 @@ async function showReplays(id) {
       filters.query = event.target.value;
       renderGroups(t);
     };
-    const side = $("#group-side");
-    if (side) {
-      side.value = filters.side;
-      side.onchange = (event) => {
-        filters.side = event.target.value;
-        renderGroups(t);
-      };
-    }
   }
   renderGroups(t);
 }
@@ -466,8 +536,9 @@ function renderGroups(t) {
         <span class="links"><span>${games.length} of ${m.scores[0] + m.scores[1]} replays</span><a href="#/${t.id}/${m.id}">Show in bracket</a></span></div>
       <div class="cards small">${games.map((r) => `<div class="rep-card"><a href="#/${t.id}/${m.id}/${r.slug}" aria-label="Watch ${escape(r.map ?? "")}, ${escape(r.names.join(" vs "))}, ${duration(r.frames)}">
         ${r.thumb ? `<img src="${base}tournaments/${t.id}/${escape(r.thumb)}" alt="">` : ""}<span class="shade"></span>
-        <span class="versus">${versus(r.names)}</span><span class="chip bl">${escape(r.map ?? "Unknown map")}</span><span class="chip br">${duration(r.frames)}</span></a></div>`).join("")}</div></section>`;
+        <span class="versus">${versus(r.names)}</span><span class="tag bl">${escape(r.map ?? "Unknown map")}</span><span class="tag br">${duration(r.frames)}</span></a></div>`).join("")}</div></section>`;
   }).join("") : `<p class="empty">No replays match “${escape(filters.query)}”.</p>`;
+  fitNames();
 }
 
 // Watching.

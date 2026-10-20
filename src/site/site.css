@@ -122,13 +122,13 @@ body[data-view="page"] {
 #site .btn:hover {
   background: rgba(238, 244, 240, 0.1);
 }
-.btn.primary {
+.btn-primary {
   border: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 650;
 }
-#site .btn.primary:hover {
+#site .btn-primary:hover {
   background: #6ba0cf;
 }
 .btn.large {
@@ -158,20 +158,83 @@ body[data-view="page"] {
   border: 0;
   outline: none;
 }
-.select {
+.dropdown {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 13px;
 }
-.select select {
+.dropdown-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   height: 36px;
-  padding: 0 8px;
+  min-width: 150px;
+  padding: 0 10px 0 12px;
   border-radius: 4px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
+  border: 1px solid var(--line-strong) !important;
+  background: var(--surface) !important;
   color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+#site .dropdown-button:hover,
+.dropdown-button[aria-expanded="true"] {
+  border-color: rgba(238, 244, 240, 0.3) !important;
+  background: var(--surface-2) !important;
+}
+#site .dropdown-button svg {
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+.dropdown-button[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+/* The same glass panel as the player's speed and volume menus. */
+.dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 4;
+  display: grid;
+  min-width: 100%;
+  padding: 4px;
+  border-radius: 9px;
+  background: rgba(12, 23, 25, 0.96);
+  border: 1px solid #ffffff24;
+  box-shadow: 0 12px 32px #0006;
+}
+.dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 10px;
+  border-radius: 5px;
+  color: #c4cdc8;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+.dropdown-menu button::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.dropdown-menu button[aria-checked="true"] {
+  color: #78b8ef;
+  font-weight: 650;
+}
+.dropdown-menu button[aria-checked="true"]::before {
+  background: #78b8ef;
+}
+#site .dropdown-menu button:hover,
+.dropdown-menu button:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
 }
 
 /* Pages */
@@ -280,7 +343,7 @@ body.dragging .dropzone {
 #site .rep-card > a:hover .shade {
   background: rgba(8, 10, 9, 0.12);
 }
-.chip {
+.tag {
   position: absolute;
   padding: 3px 7px;
   border-radius: 6px;
@@ -289,11 +352,11 @@ body.dragging .dropzone {
   color: #c4cdc8;
   font-variant-numeric: tabular-nums;
 }
-.chip.bl {
+.tag.bl {
   left: 10px;
   bottom: 10px;
 }
-.chip.br {
+.tag.br {
   right: 10px;
   bottom: 10px;
   color: var(--text);
@@ -303,19 +366,25 @@ body.dragging .dropzone {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  max-width: 88%;
+  max-width: 90%;
   padding: 7px 12px;
   border-radius: 6px;
   background: rgba(9, 11, 10, 0.82);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .cards.small .versus {
-  font-size: 14px;
+  font-size: 13px;
   padding: 6px 10px;
+}
+.fit {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .vs {
   color: var(--muted);
@@ -614,7 +683,7 @@ body.dragging .dropzone {
   height: 32px;
   background: #2a302e;
 }
-.board .head {
+.board .round-head {
   position: absolute;
   top: 0;
   height: 32px;
@@ -691,7 +760,10 @@ a.match:hover {
   white-space: nowrap;
 }
 .match .name span {
+  display: block;
+  width: 100%;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 .match .score {
@@ -954,13 +1026,13 @@ a.match:hover {
     background: none;
     font-size: 14px;
   }
-  .cards:not(.small) .chip.bl {
+  .cards:not(.small) .tag.bl {
     left: 130px;
     bottom: 12px;
     padding: 0;
     background: none;
   }
-  .cards:not(.small) .chip.br {
+  .cards:not(.small) .tag.br {
     left: 10px;
     right: auto;
     bottom: 10px;

@@ -63,9 +63,12 @@ export function layout(matches, rounds, { spacing, offset }) {
       place.get(m).y = from.length ? from.reduce((sum, f) => sum + f.y, 0) / from.length : top;
     }
   const boxes = rounds.flatMap((r) => byRound.get(r).map((m) => place.get(m)));
+  // Start the first match just under the round titles.
+  const shift = Math.min(...boxes.map((b) => b.y)) - box.height / 2 - top;
+  for (const b of boxes) b.y -= shift;
   const lines = [];
   for (const b of boxes) if (b.from.length) connect(lines, b, b.from.map((f) => place.get(f)));
-  return { boxes, lines, height: top + byRound.get(rounds[base]).length * spacing + 24, place };
+  return { boxes, lines, height: Math.max(...boxes.map((b) => b.y)) + box.height / 2 + 32, place };
 }
 
 /// Elbow lines from the right edge of each earlier box to the left of `to`,

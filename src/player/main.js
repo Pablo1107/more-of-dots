@@ -49,8 +49,8 @@ document.querySelector("#player-ui").innerHTML = `
   <section id="welcome" class="welcome"><h1 id="welcome-title">Open a replay</h1><p id="status" role="status">Choose a War of Dots replay to watch.</p><button id="open" class="primary">Open replay</button><button id="welcome-back" hidden>Back</button></section>
   <section id="loading" class="loading" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading replay…</span></section>
   <nav id="layers" class="rail glass" aria-label="Layers" hidden></nav>
+  <button id="back" class="back glass" title="Back (Esc)" hidden>${icons.back}<span>Back</span></button>
   <section id="controls" class="bar" aria-label="Replay controls" hidden>
-    <button id="back" class="icon-button" title="Back" aria-label="Back" hidden>${icons.back}</button>
     <button id="play" class="icon-button" title="Play / pause (Space)" aria-label="Play">${icons.play}</button>
     <span id="time" class="time">0:00</span>
     <div id="seek" class="seek" role="slider" tabindex="0" aria-label="Replay position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
@@ -246,15 +246,16 @@ function toast(message) {
   $("toast").hidden = false;
   toastTimer = setTimeout(() => ($("toast").hidden = true), 7000);
 }
-// The bar and the layer rail each appear only while the pointer is over their
-// own edge of the window, and hide shortly after it leaves.
-const zones = { bar: 120, rail: 110 },
+// The bar, the layer rail and the site's back button each appear only while the
+// pointer is over their own part of the window, and hide shortly after it leaves.
+const zones = { bar: 120, rail: 110, back: { x: 240, y: 140 } },
   hideDelay = 450,
   timers = {};
 let pointer = null,
   cursorTimer;
 function busy(part) {
   if (part === "rail") return !!$("layers").querySelector(":focus-visible");
+  if (part === "back") return $("back").matches(":focus-visible");
   return (
     scrubbing ||
     !$("speed-menu").hidden ||
@@ -266,6 +267,7 @@ function wanted(part) {
   if (busy(part)) return true;
   if (!pointer) return false;
   if (part === "bar") return pointer.y > innerHeight - zones.bar;
+  if (part === "back") return pointer.x < zones.back.x && pointer.y < zones.back.y;
   const rail = $("layers").getBoundingClientRect();
   return (
     pointer.x > innerWidth - zones.rail &&
@@ -288,6 +290,7 @@ function settle(part, delay = hideDelay) {
 function reveal() {
   settle("bar");
   settle("rail");
+  settle("back");
 }
 // Keyboard actions show the affected control briefly, like mpv's OSD.
 function flash(part, duration = 1200) {
@@ -303,7 +306,7 @@ function track(event) {
   document.body.classList.remove("idle");
   clearTimeout(cursorTimer);
   cursorTimer = setTimeout(() => {
-    if (!wanted("bar") && !wanted("rail")) document.body.classList.add("idle");
+    if (!wanted("bar") && !wanted("rail") && !wanted("back")) document.body.classList.add("idle");
   }, 1000);
   reveal();
 }
@@ -437,6 +440,7 @@ async function openPath(path) {
     // The site may have left the player while the replay loaded.
     if (embedding.active()) toggle();
     flash("bar", 2500);
+    if (embedding.back) flash("back", 2500);
   } catch (error) {
     showScreen("welcome", "Couldn't open this replay", String(error));
   } finally {
@@ -585,6 +589,8 @@ addEventListener("keydown", (event) => {
       volumeMenu(false);
       $("volume").focus();
     } else if (isTauri()) getCurrentWindow().setFullscreen(false);
+    // Browsers keep Escape for leaving full screen; otherwise it leaves the player.
+    else if (embedding.back && !document.fullscreenElement) embedding.back();
     return;
   }
   if (editing) return;

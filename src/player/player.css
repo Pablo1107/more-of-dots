@@ -400,6 +400,40 @@ button svg.solid {
   color: #97a49d;
 }
 
+/* The hosted site's way back, shown while the pointer is near the top left. */
+.back {
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 0 14px 0 8px;
+  border-radius: 19px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+.back svg {
+  width: 18px;
+  height: 18px;
+}
+.show-back .back {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.back:hover {
+  background: rgba(30, 42, 44, 0.95);
+}
+
 /* Layer rail: eight one-click toggles matching shortcuts 1–8. */
 .rail {
   position: fixed;
