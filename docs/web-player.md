@@ -18,6 +18,8 @@ All code lives in this repository. The site repository holds a deploy workflow, 
 | `site.html`, `vite.site.config.ts` | The site's page and its Vite build |
 | `src/site/main.js` | The site's pages around the player: home, tournament brackets and replays, and the routes that link to them |
 | `src/site/library.js` | Replays a visitor adds, kept in the browser's IndexedDB |
+| `src/site/share.js` | Uploads, opens and stops sharing replays through the share worker |
+| `share/` | The `wod-replays` Cloudflare Worker that keeps shared replays in D1 |
 | `src/site/bracket.js` | Lays out a Challonge double elimination bracket |
 | `scripts/build-site.mjs` | Builds everything into `build/site` |
 | `scripts/tournaments.mjs` | Publishes the tournament folders from the site repository |
@@ -46,10 +48,38 @@ Every page has its own address after the `#`, so any view can be shared:
 | `#/girth-tournament-3/replays` | Every replay of a tournament, grouped by match |
 | `#/girth-tournament-3/105/6-city` | Watch the 6 City game of match 105 |
 | `#/mine/<id>` | Watch a replay kept in this browser. It only works on the device that added it. |
+| `#/r/<id>` | Watch a shared replay. It works on any device. |
 
 The player shows only on the watch pages. The site sets hooks on `embedding` in `src/player/main.js`. While another page shows, the player ignores its keyboard shortcuts and file drops. Files dropped on any page are kept in the visitor's library. The player's back button returns to the page the visitor came from.
 
-Replays a visitor adds never leave the browser. They are stored in IndexedDB under the start of their SHA-256, so adding the same file twice keeps one copy.
+Replays a visitor adds stay in the browser unless they share one. They are stored in IndexedDB under the start of their SHA-256, so adding the same file twice keeps one copy.
+
+## Sharing
+
+The link button on a replay card uploads the replay and copies its `#/r/<id>` link. The id is the same as in the library, so sharing a file twice gives the same link. A shared replay's card keeps the button in view, and clicking it again copies the link without uploading.
+
+The upload goes to the `wod-replays` Worker at https://wod-replays.moreofdots.workers.dev, which stores the file in the `wod-replays` D1 database:
+
+| Request | Result |
+|---|---|
+| `POST /replays` with the file as the body | `{ id, token }`. `token` is missing when the file was already shared. |
+| `GET /replays/<id>` | The file, or 404 when it is no longer shared |
+| `DELETE /replays/<id>` with `Authorization: Bearer <token>` | Stops sharing it |
+
+The Worker accepts files up to 1 MB that are a gzip or plain JSON replay with a map, and 10 uploads a minute from one address. Only `https://aexer0e.dev` and local addresses may call it from a page.
+
+The browser that shared a replay keeps its token. Removing the replay there also stops sharing it. Opening a shared link keeps the replay in the viewer's library, without a token.
+
+Shared replays are kept until the sharer removes them. D1's free plan holds 5 GB, about 130,000 replays of the usual size.
+
+To change the Worker, run these in `share/`:
+
+```bash
+npm install
+npm run deploy
+```
+
+`npm run dev` runs it locally with a local database. Create that database's table with `npm run schema -- --local`; the live table was created with `--remote`. Build the site with `VITE_SHARE_API=http://127.0.0.1:8787` to use the local Worker.
 
 ## Tournaments
 

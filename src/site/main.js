@@ -7,11 +7,13 @@
 //   #/<tournament>/replays  every replay of the tournament
 //   #/<tournament>/<match>/<map>  watch a tournament game
 //   #/mine/<id>             watch a replay kept in this browser
+//   #/r/<id>                watch a shared replay
 import { embedding } from "../player/main.js";
 import { addFile } from "../player/host.js";
 // After the player's styles, so the site's win where both style an element.
 import "./site.css";
-import { addReplay, getReplay, listReplays, refreshDetails, removeReplay } from "./library.js";
+import { addReplay, getReplay, listReplays, refreshDetails, removeReplay, saveReplay } from "./library.js";
+import { fetchShared, shareReplay, unshareReplay } from "./share.js";
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
 const base = new URL(import.meta.env.BASE_URL, location.href).href;
@@ -30,6 +32,7 @@ const icons = {
   file: (size) => icon(size, '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 17v-6"/><path d="M9.5 13.5 12 11l2.5 2.5"/>'),
   search: icon(14, '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   close: (size = 14) => icon(size, '<path d="m6 6 12 12M18 6 6 18"/>'),
+  link: icon(15, '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/>'),
   play: (size) => icon(size, '<path d="M7 4.5v15l12-7.5z"/>', "solid"),
   trophy: icon(15, '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>'),
   players: icon(15, '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
@@ -174,8 +177,8 @@ async function showStorage() {
       : "";
 }
 function notFound(message) {
-  shown = null;
-  showPage(null, "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="#/">Go to the home page</a></p></main>`);
+  showPage("not-found", "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="#/">Go to the home page</a></p></main>`);
+  // Every message is drawn afresh.
   shown = null;
 }
 
@@ -214,7 +217,7 @@ function showHome() {
     `${header()}<main class="page">
       <section class="dropzone" aria-label="Add replays">${icons.file(52)}
         <h1>Drop a .rep to watch it</h1>
-        <p>It starts playing in a few seconds and is kept in this browser, so you can come back to it. Nothing is uploaded.</p>
+        <p>It starts playing in a few seconds and is kept in this browser, so you can come back to it. Nothing is uploaded unless you share it.</p>
         <button type="button" class="btn btn-primary large" id="choose">Choose files</button>
       </section>
       <section class="stack" aria-labelledby="mine-title">
@@ -241,8 +244,10 @@ function showHome() {
     };
     $("#mine").onclick = (event) => {
       const remove = event.target.closest("[data-remove]");
+      const shareButton = event.target.closest("[data-share]");
       const page = event.target.closest("[data-page]");
-      if (remove) void forget(remove.dataset.remove);
+      if (remove) void forget(remove);
+      else if (shareButton) void share(shareButton);
       else if (page) {
         home.page = Number(page.dataset.page);
         renderMine();
@@ -254,12 +259,58 @@ function showHome() {
   void renderTournaments();
   void showStorage();
 }
-async function forget(id) {
+/// Removes a replay from this browser and, when this browser shared it, stops sharing it.
+async function forget(button) {
+  const id = button.dataset.remove;
   const record = await getReplay(id);
+  const token = record?.shared?.token;
+  if (token) {
+    button.disabled = true;
+    try {
+      await unshareReplay(id, token);
+    } catch (error) {
+      button.disabled = false;
+      return toast(error.message);
+    }
+  }
   await removeReplay(id);
   void renderMine();
   void showStorage();
-  toast(`Removed ${record?.players.join(" vs ") || "the replay"} from this browser.`);
+  const what = record?.players.join(" vs ") || "the replay";
+  toast(token ? `Removed ${what} and stopped sharing it.` : `Removed ${what} from this browser.`);
+}
+const shareLink = (id) => `${base}#/r/${id}`;
+/// Copies text that may still be on its way, while the click that asked for it counts.
+async function copy(text) {
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })]);
+  } catch {
+    await navigator.clipboard.writeText(await text);
+  }
+}
+/// Uploads a replay the first time it is shared, then copies its link.
+async function share(button) {
+  const id = button.dataset.share;
+  const record = await getReplay(id);
+  if (!record) return;
+  button.disabled = true;
+  const uploaded = record.shared
+    ? Promise.resolve()
+    : shareReplay(record.blob).then(async ({ token }) => {
+        const current = await getReplay(id);
+        if (current) return saveReplay({ ...current, shared: { token: token ?? null } });
+        // Removed while it uploaded.
+        if (token) await unshareReplay(id, token);
+        throw new Error("The replay was removed before it was shared.");
+      });
+  try {
+    await copy(uploaded.then(() => shareLink(id)));
+    toast("Link copied. Anyone with it can watch this replay.");
+  } catch {
+    const failed = await uploaded.then(() => null, (error) => error);
+    toast(failed ? failed.message : `Shared. The link is ${shareLink(id)}`);
+  }
+  void renderMine();
 }
 // The official map images the site publishes, as listed by the build.
 let mapIndex;
@@ -299,14 +350,17 @@ async function renderMine() {
     page = list.slice(first, first + perPage);
   const card = (r) => {
     const picture = r.thumb ?? mapPicture(r.mapRef, maps);
+    const what = escape(r.players.join(" vs "));
+    const removal = r.shared?.token ? "Remove from this browser and stop sharing" : "Remove from this browser";
     return `<div class="rep-card">
-      <a href="#/mine/${r.id}" aria-label="Watch ${escape(r.players.join(" vs "))}, ${duration(r.frames)}">
+      <a href="#/mine/${r.id}" aria-label="Watch ${what}, ${duration(r.frames)}">
         ${picture ? `<img src="${escape(picture)}" alt="">` : ""}<span class="shade"></span>
         <span class="versus">${versus(r.players)}</span>
         <span class="tag bl">${r.version ? `v${escape(r.version)} · ` : ""}${kilobytes(r.size)}</span>
         <span class="tag br">${duration(r.frames)}</span>
       </a>
-      <button type="button" class="rep-remove" data-remove="${r.id}" aria-label="Remove ${escape(r.players.join(" vs "))} from this browser" title="Remove from this browser">${icons.close(14)}</button>
+      <button type="button" class="rep-action rep-remove" data-remove="${r.id}" aria-label="${removal}: ${what}" title="${removal}">${icons.close(14)}</button>
+      <button type="button" class="rep-action rep-share${r.shared ? " shared" : ""}" data-share="${r.id}" aria-label="${r.shared ? "Copy link" : "Share"}: ${what}" title="${r.shared ? "Copy link" : "Share"}">${icons.link}</button>
     </div>`;
   };
   const numbers = Array.from({ length: pages }, (_, i) =>
@@ -593,6 +647,29 @@ async function watchMine(id) {
   const record = await getReplay(id).catch(() => null);
   if (!record)
     return notFound("This replay is kept in another browser. Replays you add stay on the device you added them on.");
+  await play(record);
+}
+/// Opens a shared replay, keeping it in this browser the first time.
+async function watchShared(id) {
+  if (!/^[0-9a-f]{16}$/.test(id)) return notFound("There is no shared replay at this address.");
+  let record = await getReplay(id).catch(() => null);
+  if (!record) {
+    let blob;
+    try {
+      blob = await fetchShared(id);
+    } catch (error) {
+      return notFound(error.message);
+    }
+    if (!blob) return notFound("This replay is no longer shared.");
+    try {
+      ({ record } = await addReplay(new File([blob], `${id}.rep`), { shared: { token: null } }));
+    } catch (error) {
+      return notFound(error.message);
+    }
+  }
+  await play(record);
+}
+async function play(record) {
   enterPlayer("#/");
   const name = `${record.id}.rep`;
   await addFile(new File([record.blob], name));
@@ -609,6 +686,7 @@ function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length) return showHome();
   if (parts[0] === "mine") return parts[1] ? watchMine(parts[1]) : showHome();
+  if (parts[0] === "r") return parts[1] ? watchShared(parts[1]) : showHome();
   const [id, second, third] = parts;
   if (!second) return showBracket(id, null);
   if (second === "replays") return showReplays(id);

@@ -1,0 +1,13 @@
+{
+  "name": "wod-replay-share",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "schema": "wrangler d1 execute wod-replays --file schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.3"
+  }
+}

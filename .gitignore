@@ -45,3 +45,6 @@ tools/python-probe-dll/target/
 out.txt
 err.txt
 traces/
+
+# Wrangler state for the share worker
+.wrangler/

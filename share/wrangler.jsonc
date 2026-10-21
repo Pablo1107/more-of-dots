@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wod-replays",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wod-replays",
+      "database_id": "6010c506-0044-4029-a9ae-c57c9b424c76"
+    }
+  ],
+  // Uploads per visitor address.
+  "ratelimits": [
+    {
+      "name": "UPLOADS",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
-// Replays a visitor adds are kept in this browser's IndexedDB and never uploaded.
-// A replay is stored once, under the start of its SHA-256, with the details the
-// home page shows so the list never has to open the files.
+// Replays a visitor adds are kept in this browser's IndexedDB. They are uploaded
+// only when the visitor shares one (share.js); `shared` then holds the token that
+// stops sharing it. A replay is stored once, under the start of its SHA-256, with
+// the details the home page shows so the list never has to open the files.
 const DATABASE = "wod-replays",
   STORE = "replays";
 
@@ -27,6 +28,7 @@ async function run(mode, action) {
 export const listReplays = () => run("readonly", (store) => store.getAll());
 export const getReplay = (id) => run("readonly", (store) => store.get(id));
 export const removeReplay = (id) => run("readwrite", (store) => store.delete(id));
+export const saveReplay = (record) => run("readwrite", (store) => store.put(record));
 
 async function text(bytes) {
   if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
@@ -63,20 +65,20 @@ export async function readHeader(bytes) {
 /// Adds the details later versions of the site read to a replay kept by an earlier one.
 export async function refreshDetails(record) {
   const updated = { ...record, ...(await readHeader(new Uint8Array(await record.blob.arrayBuffer()))) };
-  await run("readwrite", (store) => store.put(updated));
+  await saveReplay(updated);
   return updated;
 }
 
-/// Keeps a replay file. Resolves to `{ record, added }`; `added` is false when
-/// the same file was already kept.
-export async function addReplay(file) {
+/// Keeps a replay file, with any `extra` fields. Resolves to `{ record, added }`;
+/// `added` is false when the same file was already kept.
+export async function addReplay(file, extra = {}) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   const id = [...digest.slice(0, 8)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   const existing = await getReplay(id);
   if (existing) return { record: existing, added: false };
-  const record = { id, name: file.name, size: bytes.length, added: Date.now(), ...(await readHeader(bytes)), blob: new Blob([bytes]) };
-  await run("readwrite", (store) => store.put(record));
+  const record = { id, name: file.name, size: bytes.length, added: Date.now(), ...(await readHeader(bytes)), ...extra, blob: new Blob([bytes]) };
+  await saveReplay(record);
   // Ask the browser not to clear the library when it runs low on space.
   void navigator.storage?.persist?.().catch(() => {});
   return { record, added: true };

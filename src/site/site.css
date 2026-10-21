@@ -410,9 +410,8 @@ body.dragging .dropzone {
 .groups-list {
   gap: 28px;
 }
-.rep-remove {
+.rep-action {
   position: absolute;
-  right: 8px;
   top: 8px;
   width: 30px;
   height: 30px;
@@ -424,12 +423,27 @@ body.dragging .dropzone {
   color: var(--text);
   opacity: 0;
 }
-.rep-card:hover .rep-remove,
-.rep-remove:focus-visible {
+.rep-remove {
+  left: 8px;
+}
+.rep-share {
+  right: 8px;
+}
+/* A shared replay's link button stays in view. */
+.rep-share.shared {
+  color: var(--accent-text);
+  opacity: 1;
+}
+.rep-action:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+.rep-card:hover .rep-action,
+.rep-action:focus-visible {
   opacity: 1;
 }
 @media (hover: none) {
-  .rep-remove {
+  .rep-action {
     opacity: 1;
   }
 }
@@ -1040,8 +1054,14 @@ a.match:hover {
     padding: 1px 5px;
     font-size: 11px;
   }
-  .rep-remove {
+  .rep-share {
     top: 22px;
+  }
+  .rep-remove {
+    left: 10px;
+    top: 10px;
+    width: 24px;
+    height: 24px;
   }
   .tournament-cards {
     grid-template-columns: 1fr;
