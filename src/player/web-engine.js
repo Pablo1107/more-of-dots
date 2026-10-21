@@ -20,7 +20,10 @@ async function simulate(bytes, base) {
     let map = null;
     if (missing !== last && /^[\w./-]+\.png$/.test(name) && !name.includes(".."))
       for (const url of [name, name.split("/").pop()]) {
-        const response = await fetch(`${base}maps/${url}`);
+        // GitHub Pages lets browsers keep a "not found" for hours, so a map added
+        // since is asked for again past the browser's cache.
+        let response = await fetch(`${base}maps/${url}`);
+        if (!response.ok) response = await fetch(`${base}maps/${url}`, { cache: "reload" });
         if (response.ok) { map = new Uint8Array(await response.arrayBuffer()); break; }
       }
     if (!map) throw new Error(`This replay uses a map that is not available here (${missing}).`);

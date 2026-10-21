@@ -15,6 +15,9 @@ import { addReplay, getReplay, listReplays, refreshDetails, removeReplay } from 
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
 const base = new URL(import.meta.env.BASE_URL, location.href).href;
+// GitHub Pages lets browsers keep every file for hours, so the lists of maps and
+// tournaments are checked with the server on each visit; unchanged ones cost a 304.
+const revalidate = { cache: "no-cache" };
 const site = document.getElementById("site");
 const player = () => window.replayPlayer;
 const $ = (selector) => site.querySelector(selector);
@@ -261,7 +264,7 @@ async function forget(id) {
 // The official map images the site publishes, as listed by the build.
 let mapIndex;
 const publishedMaps = () =>
-  (mapIndex ??= fetch(`${base}maps/index.json`).then((r) => (r.ok ? r.json() : [])).catch(() => []).then((list) => new Set(list)));
+  (mapIndex ??= fetch(`${base}maps/index.json`, revalidate).then((r) => (r.ok ? r.json() : [])).catch(() => []).then((list) => new Set(list)));
 /// The picture of an official map a replay names, found the way More of Dots
 /// finds it in the game: by its image path, or by number in each map set.
 function mapPicture(ref, maps) {
@@ -323,12 +326,12 @@ async function renderMine() {
 // Published tournaments.
 let index;
 const tournamentIndex = () =>
-  (index ??= fetch(`${base}tournaments/index.json`).then((r) => (r.ok ? r.json() : [])).catch(() => []));
+  (index ??= fetch(`${base}tournaments/index.json`, revalidate).then((r) => (r.ok ? r.json() : [])).catch(() => []));
 const tournaments = new Map();
 function tournament(id) {
   if (!/^[\w-]+$/.test(id)) return Promise.reject(new Error("No such tournament."));
   if (!tournaments.has(id))
-    tournaments.set(id, fetch(`${base}tournaments/${id}/tournament.json`)
+    tournaments.set(id, fetch(`${base}tournaments/${id}/tournament.json`, revalidate)
       .then((r) => {
         if (!r.ok) throw new Error("No such tournament.");
         return r.json();
