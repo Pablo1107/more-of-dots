@@ -71,6 +71,42 @@ var tests = new (string, Action)[] {
             Check(replay.Units.Count == count && !replay.Experimental, $"Wrong classic layout for map {id}");
         }
     }),
+    ("each mode's layout converts exactly into the other", () => {
+        using var catalog = JsonDocument.Parse(File.ReadAllText("engine/repsim/maps/deployments.json"));
+        int both = 0;
+        foreach (var entry in catalog.RootElement.EnumerateObject())
+        {
+            if (!entry.Value.TryGetProperty("classic", out var classic) || !entry.Value.TryGetProperty("experiment", out var experimental)) continue;
+            both++;
+            foreach (var (profile, expected) in new[] { ("classic", classic), ("experiment", experimental) })
+            {
+                var stored = entry.Value.EnumerateObject().Where(mode => mode.Name != profile).ToDictionary(mode => mode.Name, mode => mode.Value);
+                var only = JsonSerializer.SerializeToElement(stored);
+                Check(BuiltInDeployments.TryConvert(only, profile, out var converted), $"Map {entry.Name} did not convert to {profile}");
+                // A layout may leave out an empty motorised list.
+                var field = (JsonElement layout, string name) =>
+                    layout.TryGetProperty(name, out var value) && !(name == "motorised" && value.EnumerateArray().All(side => side.GetArrayLength() == 0))
+                        ? JsonNode.Parse(value.GetRawText()) : null;
+                foreach (var name in new[] { "infantry", "motorised", "tanks", "cities", "capitals", "bridges" })
+                    Check(JsonNode.DeepEquals(field(converted, name), field(expected, name)), $"Map {entry.Name} {profile} {name} differs after conversion");
+            }
+        }
+        Check(both == 33, $"Expected 33 maps in both modes, found {both}");
+    }),
+    ("maps known in one mode play in the other", () => {
+        foreach (int id in new[] { 29, 46, 47, 49, 50 }) {
+            var root = Fixture(); root["map"] = id; root["mode"] = "1v1"; root["version"] = "1.4.1";
+            var classic = Read(root);
+            root["mode"] = "experiment"; var experimental = Read(root);
+            Check(classic.Mode == "classic" && classic.Map.Motorised.All(side => side.Count == 0), $"Map {id} classic kept motorised units");
+            Check(classic.Units.Count == experimental.Units.Count, $"Map {id} changed its unit count");
+            var positions = (Replay replay, params string[] types) => replay.Units.Where(unit => types.Contains(unit.Type)).Select(unit => unit.Position).OrderBy(p => p.X).ThenBy(p => p.Y);
+            Check(positions(experimental, "infantry", "motorised").SequenceEqual(positions(classic, "infantry"))
+                && positions(experimental, "tank").SequenceEqual(positions(classic, "tank")), $"Map {id} layouts differ between modes");
+        }
+        var zolamare = Fixture(); zolamare["map"] = 42; zolamare["mode"] = "experiment";
+        Check(Read(zolamare).Map.Motorised.All(side => side.Count > 0), "Classic-only map not converted to experimental");
+    }),
     ("native Zolamare maps preserve starting IDs and capital indices", () => {
         foreach (var (number, count, capitals, samples) in new[] {
             (42, 40, new[] {1,4}, new[] {(0,733,295,"infantry"),(16,792,466,"tank"),(20,843,418,"infantry"),(39,807,307,"tank")}),
