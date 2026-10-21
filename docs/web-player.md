@@ -84,7 +84,7 @@ npm run deploy
 ## Tournaments
 
 Tournaments live in the site repository under `tournaments/<id>/`: the tournament's `.rep` files and a hand-written `tournament.json`. That file holds:
-- the name, format and start date
+- the name, format, and start and end dates (`started`, `ended`)
 - the final results
 - every player with their bracket name and seed, plus their in-game `username` when it is known
 - every match copied from Challonge

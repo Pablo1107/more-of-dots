@@ -7,7 +7,7 @@ async function request(path, options) {
   try {
     response = await fetch(`${API}/replays${path}`, options);
   } catch {
-    throw new Error("Could not reach the replay service. Check your connection and try again.");
+    throw new Error("Could not reach the replay service.");
   }
   if (!response.ok) {
     const { error } = await response.json().catch(() => ({}));

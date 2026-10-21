@@ -74,6 +74,7 @@ function publishTournament(source, target, id) {
     name: tournament.name,
     format: tournament.format,
     started: tournament.started,
+    ended: tournament.ended ?? null,
     players: tournament.players.length,
     champion: champion ? { name: champion.name, username: champion.username ?? null } : null,
     matches: played.length,

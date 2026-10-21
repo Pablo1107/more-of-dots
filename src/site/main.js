@@ -117,8 +117,9 @@ const duration = (frames) => {
 };
 const kilobytes = (bytes) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 const totalSize = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : kilobytes(bytes));
-const startedOn = (date) =>
-  new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric" });
+const day = (date) => new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric" });
+/// When a tournament ran: "September 5 – October 19", or its start while it runs.
+const dates = (t) => (t.started ? (t.ended ? `${day(t.started)} – ${day(t.ended)}` : day(t.started)) : "");
 // Side colours of the game, lightened to read on the dark plate.
 const sideClasses = ["blue", "red", "purple", "orange"];
 // Bracket names, followed by the in-game username when it is known and different.
@@ -177,7 +178,7 @@ async function showStorage() {
       : "";
 }
 function notFound(message) {
-  showPage("not-found", "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="#/">Go to the home page</a></p></main>`);
+  showPage("not-found", "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="#/">Home</a></p></main>`);
   // Every message is drawn afresh.
   shown = null;
 }
@@ -217,7 +218,6 @@ function showHome() {
     `${header()}<main class="page">
       <section class="dropzone" aria-label="Add replays">${icons.file(52)}
         <h1>Drop a .rep to watch it</h1>
-        <p>It starts playing in a few seconds and is kept in this browser, so you can come back to it. Nothing is uploaded unless you share it.</p>
         <button type="button" class="btn btn-primary large" id="choose">Choose files</button>
       </section>
       <section class="stack" aria-labelledby="mine-title">
@@ -277,7 +277,7 @@ async function forget(button) {
   void renderMine();
   void showStorage();
   const what = record?.players.join(" vs ") || "the replay";
-  toast(token ? `Removed ${what} and stopped sharing it.` : `Removed ${what} from this browser.`);
+  toast(token ? `Removed ${what} and stopped sharing it.` : `Removed ${what}.`);
 }
 const shareLink = (id) => `${base}#/r/${id}`;
 /// Copies text that may still be on its way, while the click that asked for it counts.
@@ -305,10 +305,10 @@ async function share(button) {
       });
   try {
     await copy(uploaded.then(() => shareLink(id)));
-    toast("Link copied. Anyone with it can watch this replay.");
+    toast("Link copied.");
   } catch {
     const failed = await uploaded.then(() => null, (error) => error);
-    toast(failed ? failed.message : `Shared. The link is ${shareLink(id)}`);
+    toast(failed ? failed.message : `Link: ${shareLink(id)}`);
   }
   void renderMine();
 }
@@ -366,7 +366,7 @@ async function renderMine() {
   const numbers = Array.from({ length: pages }, (_, i) =>
     `<button type="button" class="btn page-number" data-page="${i}" aria-label="Page ${i + 1}"${i === home.page ? ' aria-current="page"' : ""}>${i + 1}</button>`).join("");
   element.innerHTML = !total
-    ? '<p class="empty">Replays you open are kept here, in this browser.</p>'
+    ? '<p class="empty">No replays yet.</p>'
     : !page.length
       ? `<p class="empty">No replays match “${escape(home.query)}”.</p>`
       : `<div class="cards">${page.map(card).join("")}</div>${pages > 1
@@ -427,7 +427,7 @@ async function renderTournaments() {
     <div class="tournament-cards">${list.map((t) => `<a class="tournament-card" href="#/${t.id}">
       <span class="cover">${t.cover ? `<img src="${base}tournaments/${t.id}/${escape(t.cover)}" alt="">` : ""}
         ${t.champion ? `<span class="champion"><span style="color:var(--gold);display:flex">${icons.trophy}</span>${escape(withUsername(t.champion.name, t.champion.username))}</span>` : ""}</span>
-      <span class="body"><span><b>${escape(t.name)}</b><br><span class="note">${escape(t.format)} · ${t.players} players${t.started ? ` · ${startedOn(t.started)}` : ""}</span></span>
+      <span class="body"><span><b>${escape(t.name)}</b><br><span class="note">${escape(t.format)} · ${t.players} players${t.started ? ` · ${dates(t)}` : ""}</span></span>
         <span class="stats"><span>Matches<b>${t.matches}</b></span><span>Games<b>${t.games}</b></span><span class="replays">Replays<b>${t.replays}</b></span></span></span>
     </a>`).join("")}</div>`;
 }
@@ -438,7 +438,7 @@ function tournamentHead(t, tab) {
     <nav class="crumbs" aria-label="Breadcrumb"><a href="#/">Home</a> / <span>${escape(t.name)}</span></nav>
     <div class="t-title"><div><h1>${escape(t.name)}</h1><ul class="facts">
       <li>${icons.players}${t.players.length} Players</li><li>${icons.bracket}${escape(t.format)}</li>
-      ${t.started ? `<li>${icons.calendar}Started ${startedOn(t.started)}</li>` : ""}</ul></div>
+      ${t.started ? `<li>${icons.calendar}${dates(t)}</li>` : ""}</ul></div>
       ${t.results?.length ? `<div><span class="results-label">Final results</span><ol class="results">${t.results.map((r, i) =>
         `<li><span class="place" style="background:${colors[i] ?? "#4a5250"}">${i + 1}</span><span><b>${escape(t.display(r.player))}</b><small>${escape(r.record ?? "")}</small></span></li>`).join("")}</ol></div>` : ""}
     </div>
@@ -469,9 +469,8 @@ function popover(t, m, className, style = "") {
     ${games.length ? `<ul class="map-list">${games.map((r) => `<li><a href="#/${t.id}/${m.id}/${r.slug}">
         ${r.thumb ? `<img src="${base}tournaments/${t.id}/${escape(r.thumb)}" alt="">` : ""}
         <span class="what"><b>${escape(r.map ?? "Unknown map")}</b><span class="fit">${versus(r.names)}</span><span class="note">${duration(r.frames)}${r.version ? ` · v${escape(r.version)}` : ""}</span></span>
-        <span class="play-dot" aria-hidden="true">${icons.play(12)}</span></a></li>`).join("")}</ul>
-      <span class="note">The order the maps were played in is not recorded.</span>`
-      : '<p class="note">No replays were saved for this match.</p>'}
+        <span class="play-dot" aria-hidden="true">${icons.play(12)}</span></a></li>`).join("")}</ul>`
+      : '<p class="note">No replays for this match.</p>'}
   </div>`;
 }
 
@@ -525,8 +524,7 @@ function renderRounds(t) {
       <button type="button" role="tab" data-side="losers" aria-selected="${mobile.side === "losers"}">Losers</button></div>` : ""}
     <div class="round-chips" role="tablist" aria-label="Round">${rounds.map((r) =>
       `<button type="button" role="tab" data-round="${r}" aria-selected="${r === mobile.round}">${escape(roundName(r, t.sides))}</button>`).join("")}</div>
-    <ol class="round-list">${matches.map((m) => `<li>${matchBox(t, m, "", null, true)}<span class="where">${where(m)}</span></li>`).join("")}</ol>
-    <p class="note">Tap a match with a blue tab to pick a map and watch it.</p>`;
+    <ol class="round-list">${matches.map((m) => `<li>${matchBox(t, m, "", null, true)}<span class="where">${where(m)}</span></li>`).join("")}</ol>`;
 }
 
 async function showBracket(id, open) {
@@ -534,9 +532,9 @@ async function showBracket(id, open) {
   try {
     t = await tournament(id);
   } catch {
-    return notFound("There is no tournament at this address.");
+    return notFound("Tournament not found.");
   }
-  if (open && !t.match.has(open)) return notFound("This tournament has no such match.");
+  if (open && !t.match.has(open)) return notFound("Match not found.");
   if (open) {
     const m = t.match.get(open);
     mobile.side = m.round < 0 ? "losers" : "winners";
@@ -544,7 +542,7 @@ async function showBracket(id, open) {
   }
   const fresh = showPage(`${id}/bracket`, `${t.name} · War of Dots Replays`,
     `${tournamentHead(t, "bracket")}<div class="bracket-page">
-      <p class="legend"><span class="replay-key">${icons.play(9)}</span>Replays saved for this match. Click it to pick a map.</p>
+      <p class="legend"><span class="replay-key">${icons.play(9)}</span>Has replays</p>
       ${bracketBoards(t)}<div class="rounds" id="rounds"></div><div id="sheet"></div></div>`);
   if (fresh) {
     $("#rounds").onclick = (event) => {
@@ -582,7 +580,7 @@ async function showReplays(id) {
   try {
     t = await tournament(id);
   } catch {
-    return notFound("There is no tournament at this address.");
+    return notFound("Tournament not found.");
   }
   const fresh = showPage(`${id}/replays`, `${t.name} replays · War of Dots Replays`,
     `${tournamentHead(t, "replays")}<main class="groups">
@@ -592,7 +590,7 @@ async function showReplays(id) {
           filters.side = side;
           renderGroups(t);
         }) : ""}
-        <span class="spacer"></span><span class="note">${t.replays.length} replays from ${t.games.size} matches · map order is not recorded</span>
+        <span class="spacer"></span><span class="note">${t.replays.length} replays from ${t.games.size} matches</span>
       </div>
       <div id="groups" class="groups-list"></div></main>`);
   if (fresh) {
@@ -636,22 +634,22 @@ async function watchTournament(id, matchId, slug) {
   try {
     t = await tournament(id);
   } catch {
-    return notFound("There is no tournament at this address.");
+    return notFound("Tournament not found.");
   }
   const game = (t.games.get(matchId) ?? []).find((r) => r.slug === slug);
-  if (!game) return notFound("This tournament has no such game.");
+  if (!game) return notFound("Game not found.");
   enterPlayer(`#/${id}/${matchId}`);
   void player().loadReplay(`${base}tournaments/${id}/${encodeURIComponent(game.file)}`);
 }
 async function watchMine(id) {
   const record = await getReplay(id).catch(() => null);
   if (!record)
-    return notFound("This replay is kept in another browser. Replays you add stay on the device you added them on.");
+    return notFound("This replay is only on the device that added it.");
   await play(record);
 }
 /// Opens a shared replay, keeping it in this browser the first time.
 async function watchShared(id) {
-  if (!/^[0-9a-f]{16}$/.test(id)) return notFound("There is no shared replay at this address.");
+  if (!/^[0-9a-f]{16}$/.test(id)) return notFound("Replay not found.");
   let record = await getReplay(id).catch(() => null);
   if (!record) {
     let blob;
@@ -691,7 +689,7 @@ function route() {
   if (!second) return showBracket(id, null);
   if (second === "replays") return showReplays(id);
   const match = Number(second);
-  if (!Number.isInteger(match)) return notFound("There is nothing at this address.");
+  if (!Number.isInteger(match)) return notFound("Page not found.");
   return third ? watchTournament(id, match, third) : showBracket(id, match);
 }
 addEventListener("hashchange", () => {
