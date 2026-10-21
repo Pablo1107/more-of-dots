@@ -1,8 +1,10 @@
 // Builds the hosted replay player into build/site: the player page, the
 // WebAssembly engine compiled from engine/repsim, and the official maps.
-//   node scripts/build-site.mjs [--audio <folder>] [--tournaments <folder>] [--skip-engine]
-// --audio copies the site's sound files and --tournaments publishes its tournaments
-// (scripts/tournaments.mjs). Both are kept outside this repository.
+//   node scripts/build-site.mjs [--audio <folder>] [--maps <folder>] [--tournaments <folder>] [--skip-engine]
+// --audio copies the site's sound files, --maps the game's official map images
+// (laid out as in the game, e.g. assets/zolamare_maps/map56.png) and --tournaments
+// publishes its tournaments (scripts/tournaments.mjs). All are kept outside this
+// repository.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +15,7 @@ const at = (...parts) => path.join(project, ...parts);
 const args = process.argv.slice(2);
 const folder = (flag) => (args.includes(flag) ? path.resolve(args[args.indexOf(flag) + 1]) : null);
 const audio = folder('--audio');
+const gameMaps = folder('--maps');
 const tournaments = folder('--tournaments');
 const run = (command, parameters) => execFileSync(command, parameters, { cwd: project, stdio: 'inherit' });
 
@@ -30,13 +33,19 @@ fs.renameSync(path.join(site, 'site.html'), path.join(site, 'index.html'));
 fs.cpSync(path.join(engine, 'wwwroot/_framework'), path.join(site, 'engine/_framework'), {
   recursive: true, filter: source => !/\.(br|gz)$/.test(source),
 });
-// Web addresses are case-sensitive; replays name maps in lower case.
-const maps = at('engine/repsim/maps');
-for (const file of fs.readdirSync(maps, { recursive: true }).filter(name => name.endsWith('.png'))) {
-  const target = path.join(site, 'maps', file.toLowerCase());
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(path.join(maps, file), target);
-}
+// Web addresses are case-sensitive; replays name maps in lower case. The game's
+// own images, when given, replace the engine's copies of the same maps.
+const published = new Set();
+for (const maps of [at('engine/repsim/maps'), gameMaps].filter(Boolean))
+  for (const file of fs.readdirSync(maps, { recursive: true }).filter(name => name.endsWith('.png'))) {
+    const name = file.replaceAll('\\', '/').toLowerCase();
+    const target = path.join(site, 'maps', name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(maps, file), target);
+    published.add(name);
+  }
+// The site finds the picture of a replay that only names its map in this list.
+fs.writeFileSync(path.join(site, 'maps/index.json'), JSON.stringify([...published].sort()));
 if (audio) fs.cpSync(audio, path.join(site, 'audio'), { recursive: true });
 if (tournaments) publishTournaments(tournaments, path.join(site, 'tournaments'));
 else {

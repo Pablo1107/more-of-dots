@@ -436,6 +436,7 @@ body.dragging .dropzone {
 
 /* Pager */
 .pager {
+  margin-top: 24px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

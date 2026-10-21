@@ -48,12 +48,23 @@ export async function readHeader(bytes) {
   const teams = (replay.player_usernames ?? replay.player_names ?? []).map((team) =>
     (Array.isArray(team) ? team : [team]).map((player) => (typeof player === "string" ? player : player?.username ?? "")),
   );
+  const surface = typeof map?.map_surface === "string" ? map.map_surface : null;
+  // Official maps are only named: by their image in the game (assets/fahero_maps/map4.png) or by number.
+  const named = replay.map && typeof replay.map === "object" ? replay.map.path : replay.map;
   return {
     players: teams.map((team) => team.join(" & ")),
     version: replay.version ?? null,
     frames: Number(replay.end) || 0,
-    thumb: typeof map?.map_surface === "string" ? `data:image/png;base64,${map.map_surface}` : null,
+    thumb: surface ? `data:image/png;base64,${surface}` : null,
+    mapRef: !surface && (typeof named === "string" || typeof named === "number") ? String(named).trim() : null,
   };
+}
+
+/// Adds the details later versions of the site read to a replay kept by an earlier one.
+export async function refreshDetails(record) {
+  const updated = { ...record, ...(await readHeader(new Uint8Array(await record.blob.arrayBuffer()))) };
+  await run("readwrite", (store) => store.put(updated));
+  return updated;
 }
 
 /// Keeps a replay file. Resolves to `{ record, added }`; `added` is false when

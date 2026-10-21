@@ -442,7 +442,8 @@ async function openPath(path) {
     flash("bar", 2500);
     if (embedding.back) flash("back", 2500);
   } catch (error) {
-    showScreen("welcome", "Couldn't open this replay", String(error));
+    // Each worker the error passes through adds its own "Error: ".
+    showScreen("welcome", "Couldn't open this replay", String(error?.message ?? error).replace(/^(Error: )+/, ""));
   } finally {
     opening = false;
     if (nextPath) {

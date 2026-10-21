@@ -11,7 +11,7 @@ import { embedding } from "../player/main.js";
 import { addFile } from "../player/host.js";
 // After the player's styles, so the site's win where both style an element.
 import "./site.css";
-import { addReplay, getReplay, listReplays, removeReplay } from "./library.js";
+import { addReplay, getReplay, listReplays, refreshDetails, removeReplay } from "./library.js";
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
 const base = new URL(import.meta.env.BASE_URL, location.href).href;
@@ -258,10 +258,33 @@ async function forget(id) {
   void showStorage();
   toast(`Removed ${record?.players.join(" vs ") || "the replay"} from this browser.`);
 }
+// The official map images the site publishes, as listed by the build.
+let mapIndex;
+const publishedMaps = () =>
+  (mapIndex ??= fetch(`${base}maps/index.json`).then((r) => (r.ok ? r.json() : [])).catch(() => []).then((list) => new Set(list)));
+/// The picture of an official map a replay names, found the way More of Dots
+/// finds it in the game: by its image path, or by number in each map set.
+function mapPicture(ref, maps) {
+  if (!ref) return null;
+  const name = ref.replaceAll("\\", "/").toLowerCase();
+  const candidates = /^\d+$/.test(name)
+    ? ["fahero", "zolamare", "eronion"].map((set) => `assets/${set}_maps/map${name}.png`).concat(`map${name}.png`)
+    : [name, name.split("/").pop()];
+  const found = candidates.find((candidate) => maps.has(candidate));
+  return found ? `${base}maps/${found}` : null;
+}
+
 async function renderMine() {
   const element = $("#mine");
   if (!element) return;
   let list = await listReplays().catch(() => []);
+  // Replays kept before the site read map names get them once.
+  const older = list.filter((r) => !r.thumb && !("mapRef" in r));
+  if (older.length) {
+    const refreshed = await Promise.all(older.map((r) => refreshDetails(r).catch(() => r)));
+    list = list.filter((r) => !older.includes(r)).concat(refreshed);
+  }
+  const maps = await publishedMaps();
   const total = list.length;
   const query = home.query.trim().toLowerCase();
   if (query) list = list.filter((r) => [...r.players, r.name].some((text) => text.toLowerCase().includes(query)));
@@ -271,15 +294,18 @@ async function renderMine() {
   home.page = Math.min(home.page, pages - 1);
   const first = home.page * perPage,
     page = list.slice(first, first + perPage);
-  const card = (r) => `<div class="rep-card">
+  const card = (r) => {
+    const picture = r.thumb ?? mapPicture(r.mapRef, maps);
+    return `<div class="rep-card">
       <a href="#/mine/${r.id}" aria-label="Watch ${escape(r.players.join(" vs "))}, ${duration(r.frames)}">
-        ${r.thumb ? `<img src="${escape(r.thumb)}" alt="">` : ""}<span class="shade"></span>
+        ${picture ? `<img src="${escape(picture)}" alt="">` : ""}<span class="shade"></span>
         <span class="versus">${versus(r.players)}</span>
         <span class="tag bl">${r.version ? `v${escape(r.version)} · ` : ""}${kilobytes(r.size)}</span>
         <span class="tag br">${duration(r.frames)}</span>
       </a>
       <button type="button" class="rep-remove" data-remove="${r.id}" aria-label="Remove ${escape(r.players.join(" vs "))} from this browser" title="Remove from this browser">${icons.close(14)}</button>
     </div>`;
+  };
   const numbers = Array.from({ length: pages }, (_, i) =>
     `<button type="button" class="btn page-number" data-page="${i}" aria-label="Page ${i + 1}"${i === home.page ? ' aria-current="page"' : ""}>${i + 1}</button>`).join("");
   element.innerHTML = !total
