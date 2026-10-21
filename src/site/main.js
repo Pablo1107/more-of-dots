@@ -8,12 +8,13 @@
 //   #/<tournament>/<match>/<map>  watch a tournament game
 //   #/mine/<id>             watch a replay kept in this browser
 //   #/r/<id>                watch a shared replay
+//   #/s?=<link>             watch the replay at a link, such as a Discord attachment
 import { embedding } from "../player/main.js";
 import { addFile } from "../player/host.js";
 // After the player's styles, so the site's win where both style an element.
 import "./site.css";
 import { addReplay, getReplay, listReplays, refreshDetails, removeReplay, saveReplay } from "./library.js";
-import { fetchShared, shareReplay, unshareReplay } from "./share.js";
+import { downloadLink, fetchShared, shareReplay, unshareReplay } from "./share.js";
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
 const base = new URL(import.meta.env.BASE_URL, location.href).href;
@@ -203,6 +204,35 @@ async function keepFiles(files) {
   }
   void showStorage();
 }
+/// A web address typed or pasted by the visitor, plain or percent-encoded, or null.
+function parseLink(text) {
+  text = text.trim();
+  try {
+    const url = new URL(/^https?%3a/i.test(text) ? decodeURIComponent(text) : text);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+const linkName = (url) => decodeURIComponent(url.pathname.split("/").pop() || "") || "replay.rep";
+/// Keeps the replay a link points to, such as a Discord attachment.
+async function openLink(text) {
+  const url = parseLink(text);
+  if (!url) return toast("That is not a link.");
+  const button = site.querySelector("#link-form .btn");
+  if (button) button.disabled = true;
+  toast("Downloading the replay.");
+  try {
+    const blob = await downloadLink(url);
+    document.querySelector(".site-toast")?.setAttribute("hidden", "");
+    await keepFiles([new File([blob], linkName(url))]);
+    if ($("#link")) $("#link").value = "";
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
 function choose() {
   const input = Object.assign(document.createElement("input"), { type: "file", accept: ".rep", multiple: true });
   input.onchange = () => input.files.length && keepFiles([...input.files]);
@@ -219,6 +249,10 @@ function showHome() {
       <section class="dropzone" aria-label="Add replays">${icons.file(52)}
         <h1>Drop a .rep to watch it</h1>
         <button type="button" class="btn btn-primary large" id="choose">Choose files</button>
+        <form class="link-form" id="link-form">
+          <label class="search">${icons.link}<span class="sr-only">Replay link</span><input type="url" id="link" placeholder="Or paste a link to a .rep" required></label>
+          <button type="submit" class="btn">Open</button>
+        </form>
       </section>
       <section class="stack" aria-labelledby="mine-title">
         <div class="section-head"><h2 id="mine-title">Your replays</h2><span class="spacer"></span>
@@ -236,6 +270,10 @@ function showHome() {
   );
   if (fresh) {
     $("#choose").onclick = choose;
+    $("#link-form").onsubmit = (event) => {
+      event.preventDefault();
+      void openLink($("#link").value);
+    };
     $("#mine-search").value = home.query;
     $("#mine-search").oninput = (event) => {
       home.query = event.target.value;
@@ -667,6 +705,21 @@ async function watchShared(id) {
   }
   await play(record);
 }
+/// Opens the replay at a link, keeping it in this browser: #/s?=<link>.
+async function watchLink(text) {
+  const url = parseLink(text);
+  if (!url) return notFound("That is not a link.");
+  showPage("downloading", "War of Dots Replays", `${header()}<main class="page"><p class="empty">Downloading the replay.</p></main>`);
+  shown = null;
+  let record;
+  try {
+    ({ record } = await addReplay(new File([await downloadLink(url)], linkName(url))));
+  } catch (error) {
+    return notFound(error.message);
+  }
+  // The visitor may have gone elsewhere while it downloaded.
+  if (location.hash.slice(location.hash.indexOf("=") + 1) === text) await play(record);
+}
 async function play(record) {
   enterPlayer("#/");
   const name = `${record.id}.rep`;
@@ -681,6 +734,9 @@ embedding.files = (files) => void keepFiles(files);
 embedding.back = () => (navigations ? history.back() : (location.hash = backTarget));
 
 function route() {
+  // The link holds slashes of its own, so it is read before the address is split.
+  const link = /^#\/s\?(?:url)?=(.+)$/.exec(location.hash);
+  if (link) return watchLink(link[1]);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length) return showHome();
   if (parts[0] === "mine") return parts[1] ? watchMine(parts[1]) : showHome();
@@ -717,6 +773,17 @@ addEventListener("drop", (event) => {
   document.body.classList.remove("dragging");
   const files = [...(event.dataTransfer?.files ?? [])];
   if (files.length) void keepFiles(files);
+});
+
+// Pasting a link anywhere on a page outside a field opens it, as does pasting copied files.
+addEventListener("paste", (event) => {
+  if (view !== "page" || event.target.closest?.("input, textarea")) return;
+  const files = [...(event.clipboardData?.files ?? [])];
+  const text = event.clipboardData?.getData("text") ?? "";
+  if (files.length) void keepFiles(files);
+  else if (/^https?:\/\/\S+$/.test(text.trim())) void openLink(text);
+  else return;
+  event.preventDefault();
 });
 
 // Older links name a replay file to play: ?replay=<url>. The player opens those itself.

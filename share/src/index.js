@@ -4,10 +4,31 @@
 //   POST   /replays      body: the .rep file   → { id, token }  (no token if it was already shared)
 //   GET    /replays/<id>                       → the .rep file
 //   DELETE /replays/<id> Authorization: Bearer <token>
+// It also downloads replays from links, such as Discord attachments, which most sites
+// do not let a page read. It only ever returns a replay, so it cannot be used to
+// download anything else:
+//   GET    /fetch?url=<link>  → the .rep file
 const MAX_SIZE = 1 << 20,
   MAX_TEXT = 32 << 20;
 const ORIGINS = /^(https:\/\/aexer0e\.dev|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/;
 const ID = /^[0-9a-f]{16}$/;
+const DISCORD = /^(cdn\.discordapp\.com|media\.discordapp\.net)$/;
+
+/// The body of a response, or null when it is larger than MAX_SIZE.
+async function readLimited(response) {
+  if (Number(response.headers.get("Content-Length")) > MAX_SIZE) return null;
+  const parts = [];
+  let total = 0;
+  for await (const part of response.body ?? []) {
+    total += part.length;
+    if (total > MAX_SIZE) return null;
+    parts.push(part);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) bytes.set(part, at), (at += part.length);
+  return bytes;
+}
 
 const hex = (bytes) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const sha256 = async (data) => new Uint8Array(await crypto.subtle.digest("SHA-256", data));
@@ -62,6 +83,35 @@ async function upload(request, env) {
   return meta.changes ? respond(request, { id, token }, 201) : respond(request, { id });
 }
 
+/// Downloads a replay from a link. Only files up to MAX_SIZE that are replays are returned.
+async function fetchLink(request, env, link) {
+  let url;
+  try {
+    url = new URL(link ?? "");
+  } catch {
+    return failure(request, 400, "That is not a link.");
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.hostname === new URL(request.url).hostname)
+    return failure(request, 400, "That is not a link.");
+  const address = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  if (!(await env.UPLOADS.limit({ key: `fetch:${address}` })).success)
+    return failure(request, 429, "Too many links opened at once. Try again in a minute.");
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    return failure(request, 502, "Could not download this link.");
+  }
+  if (!response.ok)
+    return DISCORD.test(url.hostname)
+      ? failure(request, 404, "This link has expired or the file was removed. Copy the link from Discord again.")
+      : failure(request, 404, "Could not download this link.");
+  const bytes = await readLimited(response);
+  if (!bytes) return failure(request, 413, "This file is too large to be a replay.");
+  if (!bytes.length || !(await isReplay(bytes))) return failure(request, 400, "This is not a War of Dots replay.");
+  return respond(request, bytes, 200, { "Content-Type": "application/octet-stream" });
+}
+
 async function download(request, env, id) {
   const row = await env.DB.prepare("SELECT data FROM replays WHERE id = ?").bind(id).first();
   if (!row) return failure(request, 404, "This replay is no longer shared.");
@@ -78,9 +128,14 @@ async function remove(request, env, id) {
 
 export default {
   async fetch(request, env) {
-    const { pathname } = new URL(request.url);
+    const { pathname, searchParams } = new URL(request.url);
     const [, collection, id, extra] = pathname.split("/");
     if (request.method === "OPTIONS") return respond(request, null, 204);
+    if (collection === "fetch" && id === undefined)
+      return request.method === "GET" ? await fetchLink(request, env, searchParams.get("url")).catch((error) => {
+        console.error(error);
+        return failure(request, 502, "Could not download this link.");
+      }) : failure(request, 405, "Method not allowed.");
     if (collection !== "replays" || extra !== undefined) return failure(request, 404, "Not found.");
     try {
       if (id === undefined || id === "") return request.method === "POST" ? await upload(request, env) : failure(request, 405, "Method not allowed.");
