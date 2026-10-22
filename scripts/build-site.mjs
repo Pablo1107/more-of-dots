@@ -4,10 +4,11 @@
 // --audio copies the site's sound files, --maps the game's official map images
 // (laid out as in the game, e.g. assets/zolamare_maps/map56.png) and --tournaments
 // publishes its tournaments (scripts/tournaments.mjs). All are kept outside this
-// repository.
+// repository. Each page's link preview is written last (scripts/og-cards.mjs).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeLinkPreviews } from './og-cards.mjs';
 import { publishTournaments } from './tournaments.mjs';
 
 const project = path.resolve(import.meta.dirname, '..');
@@ -52,6 +53,13 @@ else {
   fs.mkdirSync(path.join(site, 'tournaments'), { recursive: true });
   fs.writeFileSync(path.join(site, 'tournaments/index.json'), '[]');
 }
+const previews = await writeLinkPreviews(site);
+console.log(`Wrote ${previews.pages} link previews and ${previews.cards} cards`);
+// Pages are served at their paths by the share worker. Should a path reach GitHub
+// Pages instead, it opens the same page by its earlier #/ address.
+fs.writeFileSync(path.join(site, '404.html'), `<!doctype html><meta charset="utf-8"><title>War of Dots Replays</title>
+<script>const [, folder, ...rest] = location.pathname.split("/"); location.replace("/" + folder + "/#/" + rest.join("/") + location.search);</script>
+`);
 
 const git = parameters => execFileSync('git', parameters, { cwd: project, encoding: 'utf8' }).trim();
 fs.writeFileSync(path.join(site, 'version.json'), JSON.stringify({

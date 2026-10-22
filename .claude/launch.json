@@ -13,6 +13,19 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "4173", "--bind", "127.0.0.1", "--directory", "build"],
       "port": 4173
+    },
+    {
+      "name": "site-files",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "4174", "--bind", "127.0.0.1", "--directory", "build/preview"],
+      "port": 4174
+    },
+    {
+      "name": "site-pages",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--prefix", "share", "wrangler", "dev", "--config", "share/wrangler.jsonc", "--port", "8787", "--var", "SITE_ORIGIN:http://127.0.0.1:4174"],
+      "port": 8787,
+      "url": "http://localhost:8787"
     }
   ]
 }

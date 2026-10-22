@@ -2,7 +2,7 @@
 // simulates in a worker and its chunks are kept in memory as the engine wrote them.
 import { chunkHeader } from "./frames.js";
 
-const base = new URL(import.meta.env.BASE_URL, location.href).href;
+const base = new URL(import.meta.env.BASE_URL, document.baseURI).href;
 const files = new Map();
 
 export function addFile(file) {

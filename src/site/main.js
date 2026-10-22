@@ -1,23 +1,29 @@
 // The hosted site: a home page with the visitor's own replays and the published
 // tournaments, each tournament's bracket and replays, and the player. Pages are
-// addressed by the hash so every view can be shared as a link:
-//   #/                     home
-//   #/<tournament>          bracket; a tournament's earlier ids (its aliases) lead here
-//   #/<tournament>/<match>  bracket with that match's replays open
-//   #/<tournament>/replays  every replay of the tournament
-//   #/<tournament>/<match>/<map>  watch a tournament game
-//   #/mine/<id>             watch a replay kept in this browser
-//   #/r/<id>                watch a shared replay
-//   #/s?=<link>             watch the replay at a link, such as a Discord attachment
+// addressed by paths under the site's folder, so every view can be shared as a
+// link with its own preview (share/ serves them):
+//   (the folder)          home
+//   <tournament>          bracket; a tournament's earlier ids (its aliases) lead here
+//   <tournament>/<match>  bracket with that match's replays open
+//   <tournament>/replays  every replay of the tournament
+//   <tournament>/<match>/<map>  watch a tournament game
+//   mine/<id>             watch a replay kept in this browser
+//   r/<id>                watch a shared replay
+//   s?=<link>             watch the replay at a link, such as a Discord attachment
+// Earlier links put the same paths after #/ and still open.
+import "./base.js";
 import { embedding } from "../player/main.js";
 import { addFile } from "../player/host.js";
 // After the player's styles, so the site's win where both style an element.
 import "./site.css";
 import { addReplay, getReplay, listReplays, refreshDetails, removeReplay, saveReplay } from "./library.js";
-import { downloadLink, fetchShared, shareReplay, unshareReplay } from "./share.js";
+import { downloadLink, fetchShared, shareReplay, unshareReplay, uploadCard } from "./share.js";
+import { drawCard } from "./card.js";
 import { box, connect, layout, nextMatches, roundName, sides } from "./bracket.js";
 
-const base = new URL(import.meta.env.BASE_URL, location.href).href;
+const base = new URL(import.meta.env.BASE_URL, document.baseURI).href;
+// The site's folder as a path, such as /wod-replay-player/; every page is under it.
+const root = new URL(document.baseURI).pathname;
 // GitHub Pages lets browsers keep every file for hours, so the lists of maps and
 // tournaments are checked with the server on each visit; unchanged ones cost a 304.
 const revalidate = { cache: "no-cache" };
@@ -147,7 +153,7 @@ function toast(message) {
 let view = null,
   shown = null,
   navigations = 0,
-  backTarget = "#/";
+  backTarget = "";
 function setView(next) {
   if (view === "watch" && next !== "watch") {
     player().pause();
@@ -169,7 +175,7 @@ function showPage(key, title, html) {
   return fresh;
 }
 const header = (wide = false) =>
-  `<header class="site-header${wide ? " wide" : ""}"><div><a class="brand" href="#/">${icons.logo}<span>War of Dots Replays</span></a><span class="storage" id="storage"></span></div></header>`;
+  `<header class="site-header${wide ? " wide" : ""}"><div><a class="brand" href="${root}">${icons.logo}<span>War of Dots Replays</span></a><span class="storage" id="storage"></span></div></header>`;
 async function showStorage() {
   const list = await listReplays().catch(() => []);
   const element = document.getElementById("storage");
@@ -179,7 +185,7 @@ async function showStorage() {
       : "";
 }
 function notFound(message) {
-  showPage("not-found", "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="#/">Home</a></p></main>`);
+  showPage("not-found", "Not found · War of Dots Replays", `${header()}<main class="page"><p class="empty">${escape(message)} <a href="${root}">Home</a></p></main>`);
   // Every message is drawn afresh.
   shown = null;
 }
@@ -195,11 +201,11 @@ async function keepFiles(files) {
       failed.push(`${file.name}: ${error.message}`);
     }
   if (failed.length) toast(failed.length === 1 ? failed[0] : `${failed.length} files are not War of Dots replays.`);
-  if (kept.length === 1) location.hash = `#/mine/${kept[0].record.id}`;
+  if (kept.length === 1) go(`mine/${kept[0].record.id}`);
   else if (kept.length) {
     const added = kept.filter((k) => k.added).length;
     toast(added === kept.length ? `Added ${added} replays.` : `Added ${added} replays. ${kept.length - added} were already here.`);
-    if (location.hash.replace(/^#\/?/, "")) location.hash = "#/";
+    if (currentPath()) go("");
     else renderMine();
   }
   void showStorage();
@@ -317,7 +323,7 @@ async function forget(button) {
   const what = record?.players.join(" vs ") || "the replay";
   toast(token ? `Removed ${what} and stopped sharing it.` : `Removed ${what}.`);
 }
-const shareLink = (id) => `${base}#/r/${id}`;
+const shareLink = (id) => new URL(`${root}r/${id}`, location.href).href;
 /// Copies text that may still be on its way, while the click that asked for it counts.
 async function copy(text) {
   try {
@@ -349,6 +355,21 @@ async function share(button) {
     toast(failed ? failed.message : `Link: ${shareLink(id)}`);
   }
   void renderMine();
+  void uploaded.then(() => addCard(id), () => {});
+}
+/// Gives a replay this browser shared the picture its link preview shows, once.
+async function addCard(id) {
+  const record = await getReplay(id);
+  const token = record?.shared?.token;
+  if (!token || record.shared.card) return;
+  try {
+    const picture = record.thumb ?? mapPicture(record.mapRef, await publishedMaps());
+    await uploadCard(id, token, await drawCard({ players: record.players, frames: record.frames, version: record.version, picture }, base));
+    const current = await getReplay(id);
+    if (current?.shared) await saveReplay({ ...current, shared: { ...current.shared, card: true } });
+  } catch {
+    // The preview shows the replay's details without a picture until the next share.
+  }
 }
 // The official map images the site publishes, as listed by the build.
 let mapIndex;
@@ -391,7 +412,7 @@ async function renderMine() {
     const what = escape(r.players.join(" vs "));
     const removal = r.shared?.token ? "Remove from this browser and stop sharing" : "Remove from this browser";
     return `<div class="rep-card">
-      <a href="#/mine/${r.id}" aria-label="Watch ${what}, ${duration(r.frames)}">
+      <a href="${root}mine/${r.id}" aria-label="Watch ${what}, ${duration(r.frames)}">
         ${picture ? `<img src="${escape(picture)}" alt="">` : ""}<span class="shade"></span>
         <span class="versus">${versus(r.players)}</span>
         <span class="tag bl">${r.version ? `v${escape(r.version)} · ` : ""}${kilobytes(r.size)}</span>
@@ -462,7 +483,7 @@ async function renderTournaments() {
   const list = await tournamentIndex();
   if (!element || !list.length) return;
   element.innerHTML = `<div class="section-head"><h2 id="tournaments-title">Tournaments</h2></div>
-    <div class="tournament-cards">${list.map((t) => `<a class="tournament-card" href="#/${t.id}">
+    <div class="tournament-cards">${list.map((t) => `<a class="tournament-card" href="${root}${t.id}">
       <span class="cover">${t.cover ? `<img src="${base}tournaments/${t.id}/${escape(t.cover)}" alt="">` : ""}
         ${t.champion ? `<span class="champion"><span style="color:var(--gold);display:flex">${icons.trophy}</span>${escape(withUsername(t.champion.name, t.champion.username))}</span>` : ""}</span>
       <span class="body"><span><b>${escape(t.name)}</b><br><span class="note">${escape(t.format)} · ${t.players} players${t.started ? ` · ${dates(t)}` : ""}</span></span>
@@ -473,7 +494,7 @@ async function renderTournaments() {
 function tournamentHead(t, tab) {
   const colors = ["#e0a458", "#c4cdc8", "#b98a62"];
   return `${header(true)}<section class="t-head">
-    <nav class="crumbs" aria-label="Breadcrumb"><a href="#/">Home</a> / <span>${escape(t.name)}</span></nav>
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="${root}">Home</a> / <span>${escape(t.name)}</span></nav>
     <div class="t-title"><div><h1>${escape(t.name)}</h1><ul class="facts">
       <li>${icons.players}${t.players.length} Players</li><li>${icons.bracket}${escape(t.format)}</li>
       ${t.started ? `<li>${icons.calendar}${dates(t)}</li>` : ""}</ul></div>
@@ -481,8 +502,8 @@ function tournamentHead(t, tab) {
         `<li><span class="place" style="background:${colors[i] ?? "#4a5250"}">${i + 1}</span><span><b>${escape(t.display(r.player))}</b><small>${escape(r.record ?? "")}</small></span></li>`).join("")}</ol></div>` : ""}
     </div>
     <nav class="tabs" aria-label="Tournament">
-      <a href="#/${t.id}"${tab === "bracket" ? ' aria-current="page"' : ""}>Bracket</a>
-      <a href="#/${t.id}/replays"${tab === "replays" ? ' aria-current="page"' : ""}>Replays <span class="count">${t.replays.length}</span></a>
+      <a href="${root}${t.id}"${tab === "bracket" ? ' aria-current="page"' : ""}>Bracket</a>
+      <a href="${root}${t.id}/replays"${tab === "replays" ? ' aria-current="page"' : ""}>Replays <span class="count">${t.replays.length}</span></a>
     </nav></section>`;
 }
 
@@ -496,15 +517,15 @@ function matchBox(t, m, style, open, numbered = false) {
   const inner = `${numbered ? `<span class="number-cell">${m.id}</span>` : ""}<span class="rows">${row(1)}${row(2)}</span>${games.length ? `<span class="tab">${icons.play(9)}${games.length}</span>` : ""}`;
   if (!games.length) return `<div class="match" style="${style}">${inner}</div>`;
   const label = `Match ${m.id}: ${t.display(m.player1)} ${m.scores[0]}, ${t.display(m.player2)} ${m.scores[1]}, ${games.length} ${games.length === 1 ? "replay" : "replays"}`;
-  return `<a class="match${open === m.id ? " open" : ""}" data-match="${m.id}" href="#/${t.id}/${m.id}" style="${style}" aria-label="${escape(label)}">${inner}</a>`;
+  return `<a class="match${open === m.id ? " open" : ""}" data-match="${m.id}" href="${root}${t.id}/${m.id}" style="${style}" aria-label="${escape(label)}">${inner}</a>`;
 }
 function popover(t, m, className, style = "") {
   const games = t.games.get(m.id) ?? [];
   return `<div class="match-pop ${className}" role="dialog" aria-label="Match ${m.id} replays" style="${style}">
     <div class="top"><span><span class="note">Match ${m.id} · ${escape(roundName(m.round, t.sides))}</span>
       <b>${escape(t.display(m.player1))} ${m.scores[0]} : ${m.scores[1]} ${escape(t.display(m.player2))}</b></span>
-      <a class="close" href="#/${t.id}" aria-label="Close">${icons.close(14)}</a></div>
-    ${games.length ? `<ul class="map-list">${games.map((r) => `<li><a href="#/${t.id}/${m.id}/${r.slug}">
+      <a class="close" href="${root}${t.id}" aria-label="Close">${icons.close(14)}</a></div>
+    ${games.length ? `<ul class="map-list">${games.map((r) => `<li><a href="${root}${t.id}/${m.id}/${r.slug}">
         ${r.thumb ? `<img src="${base}tournaments/${t.id}/${escape(r.thumb)}" alt="">` : ""}
         <span class="what"><b>${escape(r.map ?? "Unknown map")}</b><span class="fit">${versus(r.names)}</span><span class="note">${duration(r.frames)}${r.version ? ` · v${escape(r.version)}` : ""}</span></span>
         <span class="play-dot" aria-hidden="true">${icons.play(12)}</span></a></li>`).join("")}</ul>`
@@ -608,7 +629,7 @@ function showOpen(t, open, scroll) {
   site.querySelectorAll(`a.match[data-match="${open}"]`).forEach((element) => element.classList.add("open"));
   const left = where.x + box.width + 14 + 340 > where.width ? where.x - 354 : where.x + box.width + 14;
   $(`[data-board="${where.side}"]`).insertAdjacentHTML("beforeend", popover(t, m, "beside", `left:${left}px;top:${Math.max(40, Math.round(where.y - 60))}px`));
-  $("#sheet").innerHTML = `<a class="scrim" href="#/${t.id}" aria-label="Close"></a>${popover(t, m, "sheet")}`;
+  $("#sheet").innerHTML = `<a class="scrim" href="${root}${t.id}" aria-label="Close"></a>${popover(t, m, "sheet")}`;
   if (scroll) site.querySelector(`.board a.match[data-match="${open}"]`)?.scrollIntoView({ block: "center", inline: "center" });
 }
 
@@ -652,8 +673,8 @@ function renderGroups(t) {
     return `<section class="group"><div class="group-head"><div><span class="label">${escape(roundName(m.round, t.sides))} · Match ${m.id}</span><h2>
         <span class="${m.winner === 1 ? "won" : ""}">${escape(t.display(m.player1))}</span> <span class="score-box">${m.scores[0]} : ${m.scores[1]}</span>
         <span class="${m.winner === 2 ? "won" : ""}">${escape(t.display(m.player2))}</span></h2></div>
-        <span class="links"><span>${games.length} of ${m.scores[0] + m.scores[1]} replays</span><a href="#/${t.id}/${m.id}">Show in bracket</a></span></div>
-      <div class="cards small">${games.map((r) => `<div class="rep-card"><a href="#/${t.id}/${m.id}/${r.slug}" aria-label="Watch ${escape(r.map ?? "")}, ${escape(r.names.join(" vs "))}, ${duration(r.frames)}">
+        <span class="links"><span>${games.length} of ${m.scores[0] + m.scores[1]} replays</span><a href="${root}${t.id}/${m.id}">Show in bracket</a></span></div>
+      <div class="cards small">${games.map((r) => `<div class="rep-card"><a href="${root}${t.id}/${m.id}/${r.slug}" aria-label="Watch ${escape(r.map ?? "")}, ${escape(r.names.join(" vs "))}, ${duration(r.frames)}">
         ${r.thumb ? `<img src="${base}tournaments/${t.id}/${escape(r.thumb)}" alt="">` : ""}<span class="shade"></span>
         <span class="versus">${versus(r.names)}</span><span class="tag bl">${escape(r.map ?? "Unknown map")}</span><span class="tag br">${duration(r.frames)}</span></a></div>`).join("")}</div></section>`;
   }).join("") : `<p class="empty">No replays match “${escape(filters.query)}”.</p>`;
@@ -676,7 +697,7 @@ async function watchTournament(id, matchId, slug) {
   }
   const game = (t.games.get(matchId) ?? []).find((r) => r.slug === slug);
   if (!game) return notFound("Game not found.");
-  enterPlayer(`#/${id}/${matchId}`);
+  enterPlayer(`${id}/${matchId}`);
   void player().loadReplay(`${base}tournaments/${id}/${encodeURIComponent(game.file)}`);
 }
 async function watchMine(id) {
@@ -705,7 +726,7 @@ async function watchShared(id) {
   }
   await play(record);
 }
-/// Opens the replay at a link, keeping it in this browser: #/s?=<link>.
+/// Opens the replay at a link, keeping it in this browser: s?=<link>.
 async function watchLink(text) {
   const url = parseLink(text);
   if (!url) return notFound("That is not a link.");
@@ -718,10 +739,10 @@ async function watchLink(text) {
     return notFound(error.message);
   }
   // The visitor may have gone elsewhere while it downloaded.
-  if (location.hash.slice(location.hash.indexOf("=") + 1) === text) await play(record);
+  if (linkText() === text) await play(record);
 }
 async function play(record) {
-  enterPlayer("#/");
+  enterPlayer("");
   const name = `${record.id}.rep`;
   await addFile(new File([record.blob], name));
   void player().loadReplay(name);
@@ -731,22 +752,38 @@ embedding.active = () => view === "watch";
 embedding.files = (files) => void keepFiles(files);
 // Back returns to the page the visitor came from, or to the replay's parent page
 // when they arrived through a shared link.
-embedding.back = () => (navigations ? history.back() : (location.hash = backTarget));
+embedding.back = () => (navigations ? history.back() : go(backTarget));
+
+const currentPath = () => (location.pathname.startsWith(root) ? location.pathname.slice(root.length) : "");
+// The link of an s?=<link> address, as it was written.
+const linkText = () => (currentPath() === "s" && /^\?(url)?=/.test(location.search) ? location.search.slice(location.search.indexOf("=") + 1) : null);
+/// Shows the page at a path under the site's folder, as a new step in the browser's history.
+function go(path, replace = false) {
+  history[replace ? "replaceState" : "pushState"](null, "", `${root}${path}`);
+  if (!replace) navigations++;
+  void route();
+}
+/// Moves an earlier #/ address to its path in place.
+function fromHash() {
+  if (!location.hash.startsWith("#/")) return false;
+  history.replaceState(null, "", `${root}${location.hash.slice(2)}`);
+  return true;
+}
 
 async function route() {
-  // The link holds slashes of its own, so it is read before the address is split.
-  const link = /^#\/s\?(?:url)?=(.+)$/.exec(location.hash);
-  if (link) return watchLink(link[1]);
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  fromHash();
+  const text = linkText();
+  if (text) return watchLink(text);
+  const parts = currentPath().split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length) return showHome();
   if (parts[0] === "mine") return parts[1] ? watchMine(parts[1]) : showHome();
   if (parts[0] === "r") return parts[1] ? watchShared(parts[1]) : showHome();
   // A tournament's earlier address leads to its current one, keeping the rest of the link.
-  const hash = location.hash;
+  const address = location.href;
   const renamed = (await tournamentIndex()).find((t) => t.aliases?.includes(parts[0]));
-  if (location.hash !== hash) return;
+  if (location.href !== address) return;
   if (renamed) {
-    history.replaceState(history.state, "", `#/${[renamed.id, ...parts.slice(1)].map(encodeURIComponent).join("/")}`);
+    history.replaceState(history.state, "", `${root}${[renamed.id, ...parts.slice(1)].map(encodeURIComponent).join("/")}`);
     return route();
   }
   const [id, second, third] = parts;
@@ -756,17 +793,30 @@ async function route() {
   if (!Number.isInteger(match)) return notFound("Page not found.");
   return third ? watchTournament(id, match, third) : showBracket(id, match);
 }
-addEventListener("hashchange", () => {
-  navigations++;
+addEventListener("popstate", () => {
+  navigations = Math.max(0, navigations - 1);
   void route();
 });
+addEventListener("hashchange", () => {
+  if (fromHash()) void route();
+});
+// Links to pages of the site open in place.
+document.addEventListener("click", (event) => {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const anchor = event.target.closest?.("a[href]");
+  if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
+  const url = new URL(anchor.href, location.href);
+  if (url.origin !== location.origin || !url.pathname.startsWith(root) || /\.[a-z0-9]+$/i.test(url.pathname)) return;
+  event.preventDefault();
+  if (url.pathname + url.search !== location.pathname + location.search) go(url.pathname.slice(root.length) + url.search);
+});
 addEventListener("keydown", (event) => {
-  if (view === "page" && event.key === "Escape" && site.querySelector(".match-pop")) location.hash = `#/${shown.split("/")[0]}`;
+  if (view === "page" && event.key === "Escape" && site.querySelector(".match-pop")) go(shown.split("/")[0]);
 });
 // A click outside an open match's replays closes them.
 addEventListener("click", (event) => {
   if (view !== "page" || !site.querySelector(".match-pop.beside") || matchMedia("(max-width: 720px)").matches) return;
-  if (!event.target.closest(".match-pop, a.match")) location.hash = `#/${shown.split("/")[0]}`;
+  if (!event.target.closest(".match-pop, a.match")) go(shown.split("/")[0]);
 });
 
 // Dropping replays anywhere on a page keeps them; the player handles drops while it shows.
@@ -795,5 +845,5 @@ addEventListener("paste", (event) => {
 });
 
 // Older links name a replay file to play: ?replay=<url>. The player opens those itself.
-if (new URLSearchParams(location.search).has("replay")) enterPlayer("#/");
+if (new URLSearchParams(location.search).has("replay")) enterPlayer("");
 else void route();

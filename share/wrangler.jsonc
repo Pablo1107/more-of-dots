@@ -4,11 +4,14 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
+  // The site's pages, so each link gets its own preview (src/site.js).
+  "routes": [{ "pattern": "aexer0e.dev/wod-replay-player*", "zone_name": "aexer0e.dev" }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "wod-replays",
-      "database_id": "6010c506-0044-4029-a9ae-c57c9b424c76"
+      "database_id": "6010c506-0044-4029-a9ae-c57c9b424c76",
+      "migrations_dir": "migrations"
     }
   ],
   // Uploads per visitor address.

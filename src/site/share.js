@@ -31,6 +31,10 @@ export async function fetchShared(id) {
   }
 }
 
+/// Adds the picture a shared replay's link preview shows; only its sharer can.
+export const uploadCard = (id, token, blob) =>
+  request(`/replays/${id}/card`, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "image/jpeg" }, body: blob });
+
 export async function unshareReplay(id, token) {
   try {
     await request(`/replays/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });

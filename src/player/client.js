@@ -125,7 +125,7 @@ export function initializeEngine(canvas, handlers) {
   };
   const surface = canvas.transferControlToOffscreen();
   // The worker fetches artwork relative to where the app is served.
-  const base = new URL(import.meta.env.BASE_URL, location.href).href;
+  const base = new URL(import.meta.env.BASE_URL, document.baseURI).href;
   ready = call("init", { canvas: surface, base }, [surface]);
   // Surface startup errors even before a replay is selected.
   ready.catch((error) => callbacks.error?.(error));
