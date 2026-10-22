@@ -67,7 +67,7 @@ Chat apps such as Discord show a preview of a link from tags in the page's HTML,
 |---|---|
 | A tournament game | `<players> · <map>` and the tournament, with a card: the map, the players in their colours, the map, length and round |
 | A match | `<winner> <score> <loser>` and its round, with a card of its maps and lengths when it has replays |
-| A tournament | Its name, winner and number of replays, no picture |
+| A tournament | Its name, when it ran and its number of replays, no picture |
 | Its replays page | Its name and number of replays, no picture |
 | A shared replay | Its players and length, with the card its sharer's browser drew |
 | Anything else | The site's name and description, no picture |

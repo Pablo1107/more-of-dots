@@ -17,6 +17,9 @@ const HOME = { title: 'War of Dots Replays', description: 'Watch War of Dots rep
 
 const plain = (text) => text.toLowerCase().replace(/[^a-z0-9]/g, '');
 const withUsername = (name, username) => (username && plain(username) !== plain(name) ? `${name} (${username})` : name);
+const day = (date) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+// When a tournament ran, as its page shows it: "September 5 – October 19".
+const dates = (t) => (t.started ? (t.ended ? `${day(t.started)} – ${day(t.ended)}` : day(t.started)) : null);
 const clock = (frames) => {
   const s = Math.floor(frames / 30);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -101,7 +104,7 @@ export async function writeLinkPreviews(site) {
     const bracketSides = sides(t.matches);
     const picture = (thumb) => (thumb ? `data:image/png;base64,${fs.readFileSync(path.join(folder, thumb)).toString('base64')}` : null);
 
-    pages[id] = { title: t.name, description: [summary.champion ? `Won by ${summary.champion.name}` : null, `${t.replays.length} replays`].filter(Boolean).join(' · ') };
+    pages[id] = { title: t.name, description: [dates(t), `${t.replays.length} replays`].filter(Boolean).join(' · ') };
     pages[`${id}/replays`] = { title: `${t.name} replays`, description: `${t.replays.length} replays from ${new Set(t.replays.map((r) => r.match)).size} matches` };
 
     // Games are named after their map, numbered when a match repeats one, as the site does.
