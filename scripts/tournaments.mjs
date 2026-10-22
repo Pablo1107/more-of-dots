@@ -71,6 +71,8 @@ function publishTournament(source, target, id) {
   const champion = tournament.players.find((p) => p.name === tournament.results?.[0]?.player);
   return {
     id,
+    // Earlier ids of the tournament, whose links the site still opens.
+    aliases: tournament.aliases ?? [],
     name: tournament.name,
     format: tournament.format,
     started: tournament.started,

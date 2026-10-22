@@ -43,10 +43,10 @@ Every page has its own address after the `#`, so any view can be shared:
 | Address | Page |
 |---|---|
 | `#/` | Home: drop a .rep, the visitor's replays, and the tournaments |
-| `#/girth-tournament-3` | A tournament's bracket |
-| `#/girth-tournament-3/105` | The bracket with match 105's replays open |
-| `#/girth-tournament-3/replays` | Every replay of a tournament, grouped by match |
-| `#/girth-tournament-3/105/6-city` | Watch the 6 City game of match 105 |
+| `#/gt3` | A tournament's bracket |
+| `#/gt3/105` | The bracket with match 105's replays open |
+| `#/gt3/replays` | Every replay of a tournament, grouped by match |
+| `#/gt3/105/6-city` | Watch the 6 City game of match 105 |
 | `#/mine/<id>` | Watch a replay kept in this browser. It only works on the device that added it. |
 | `#/r/<id>` | Watch a shared replay. It works on any device. |
 | `#/s?=<link>` | Watch the replay at a link, such as a Discord attachment. The link may be percent-encoded. |
@@ -96,6 +96,7 @@ Tournaments live in the site repository under `tournaments/<id>/`: the tournamen
 - the final results
 - every player with their bracket name and seed, plus their in-game `username` when it is known
 - every match copied from Challonge
+- optionally, `aliases`: earlier names of the folder. Links that use one open the same page, and the address changes to the current name.
 
 The build assigns each replay to the match its two players played, matching the replay's usernames to the players' `username` fields. A replay whose players met more than once, such as a grand final and its reset, names its match in an optional `"replays": { "file.rep": 113 }` object. The build stops with a message when a replay's players are unknown or its match is ambiguous.
 

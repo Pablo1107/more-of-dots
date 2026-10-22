@@ -2,7 +2,7 @@
 // tournaments, each tournament's bracket and replays, and the player. Pages are
 // addressed by the hash so every view can be shared as a link:
 //   #/                     home
-//   #/<tournament>          bracket
+//   #/<tournament>          bracket; a tournament's earlier ids (its aliases) lead here
 //   #/<tournament>/<match>  bracket with that match's replays open
 //   #/<tournament>/replays  every replay of the tournament
 //   #/<tournament>/<match>/<map>  watch a tournament game
@@ -733,7 +733,7 @@ embedding.files = (files) => void keepFiles(files);
 // when they arrived through a shared link.
 embedding.back = () => (navigations ? history.back() : (location.hash = backTarget));
 
-function route() {
+async function route() {
   // The link holds slashes of its own, so it is read before the address is split.
   const link = /^#\/s\?(?:url)?=(.+)$/.exec(location.hash);
   if (link) return watchLink(link[1]);
@@ -741,6 +741,14 @@ function route() {
   if (!parts.length) return showHome();
   if (parts[0] === "mine") return parts[1] ? watchMine(parts[1]) : showHome();
   if (parts[0] === "r") return parts[1] ? watchShared(parts[1]) : showHome();
+  // A tournament's earlier address leads to its current one, keeping the rest of the link.
+  const hash = location.hash;
+  const renamed = (await tournamentIndex()).find((t) => t.aliases?.includes(parts[0]));
+  if (location.hash !== hash) return;
+  if (renamed) {
+    history.replaceState(history.state, "", `#/${[renamed.id, ...parts.slice(1)].map(encodeURIComponent).join("/")}`);
+    return route();
+  }
   const [id, second, third] = parts;
   if (!second) return showBracket(id, null);
   if (second === "replays") return showReplays(id);
