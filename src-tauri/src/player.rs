@@ -217,16 +217,12 @@ impl ProcessJob {
     pub(crate) fn assign(&self, child: &mut Child) -> Result<(), String> {
         use std::os::windows::io::AsRawHandle;
         unsafe {
-            if windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
+            // Wine and Proton can refuse this (the process is already in a job).
+            // The engine then runs unsupervised; sessions still stop it explicitly.
+            let _ = windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
                 self.0,
                 child.as_raw_handle(),
-            ) == 0
-            {
-                let error = std::io::Error::last_os_error().to_string();
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
+            );
             Ok(())
         }
     }

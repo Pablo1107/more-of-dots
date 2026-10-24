@@ -1,4 +1,5 @@
-//! H.264/AAC MP4 encoding with Windows Media Foundation, which ships with Windows.
+//! H.264/AAC MP4 encoding with Windows Media Foundation, which ships with Windows,
+//! or FFmpeg where Media Foundation has no encoder (Wine and Proton).
 //! A dedicated thread owns the COM objects, so rendering and encoding overlap
 //! and the encoder never crosses threads.
 use std::{
@@ -250,37 +251,44 @@ fn convert_band(rgb: &[u8], width: usize, luma: &mut [u8], chroma: &mut [u8]) {
     }
 }
 
+/// Media Foundation either encodes the whole video or reports that it cannot
+/// start (before touching `packets` or `ready`), so another encoder can take over.
 #[cfg(windows)]
-fn encode(
-    path: PathBuf,
+enum MediaFoundation {
+    Unavailable(String),
+    Finished(Result<u64, String>),
+}
+
+#[cfg(windows)]
+fn encode_media_foundation(
+    path: &Path,
     width: u32,
     height: u32,
     bitrate: u32,
     audio: bool,
-    packets: Receiver<Packet>,
-    ready: Sender<Result<(), String>>,
-) -> Result<u64, String> {
+    packets: &Receiver<Packet>,
+    ready: &Sender<Result<(), String>>,
+) -> MediaFoundation {
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
         if let Err(error) = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET) {
-            let message = format!(
-                "Windows video encoding is unavailable ({error}). On Windows N editions, install the Media Feature Pack."
-            );
-            let _ = ready.send(Err(message.clone()));
             if com {
                 CoUninitialize();
             }
-            return Err(message);
+            return MediaFoundation::Unavailable(format!(
+                "Windows video encoding is unavailable ({error}). On Windows N editions, install the Media Feature Pack."
+            ));
         }
+        let mut unavailable = None;
         let result = (|| {
-            let writer = match open_writer(&path, width, height, bitrate, audio) {
+            let writer = match open_writer(path, width, height, bitrate, audio) {
                 Ok(writer) => writer,
                 Err(error) => {
                     let message = format!("Could not start the H.264 encoder: {error}");
-                    let _ = ready.send(Err(message.clone()));
+                    unavailable = Some(message.clone());
                     return Err(message);
                 }
             };
@@ -288,7 +296,7 @@ fn encode(
             let (w, h) = (width as usize, height as usize);
             let mut nv12 = vec![0u8; w * h * 3 / 2];
             let (mut count, mut audio_frames) = (0u64, 0u64);
-            for packet in packets {
+            for packet in packets.iter() {
                 match packet {
                     Packet::Video(rgb) => {
                         if rgb.len() != w * h * 3 {
@@ -318,7 +326,10 @@ fn encode(
         if com {
             CoUninitialize();
         }
-        result
+        match unavailable {
+            Some(message) => MediaFoundation::Unavailable(message),
+            None => MediaFoundation::Finished(result),
+        }
     }
 }
 
@@ -411,19 +422,189 @@ unsafe fn write_sample(
     writer.WriteSample(stream, &sample)
 }
 
-#[cfg(not(windows))]
 fn encode(
-    _: PathBuf,
-    _: u32,
-    _: u32,
-    _: u32,
-    _: bool,
-    _: Receiver<Packet>,
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    bitrate: u32,
+    audio: bool,
+    packets: Receiver<Packet>,
     ready: Sender<Result<(), String>>,
 ) -> Result<u64, String> {
-    let message = "Video recording requires Windows.".to_string();
-    let _ = ready.send(Err(message.clone()));
-    Err(message)
+    #[cfg(windows)]
+    let unavailable = match encode_media_foundation(&path, width, height, bitrate, audio, &packets, &ready) {
+        MediaFoundation::Finished(result) => return result,
+        MediaFoundation::Unavailable(message) => message,
+    };
+    #[cfg(not(windows))]
+    let unavailable = "Video recording needs FFmpeg.".to_string();
+    // Wine and Proton have no H.264 encoder behind Media Foundation.
+    match FfmpegEncoder::start(&path, width, height, bitrate, audio) {
+        Ok(mut encoder) => {
+            let _ = ready.send(Ok(()));
+            encoder.run(&packets)
+        }
+        Err(error) => {
+            let message = format!("{unavailable} {error}");
+            let _ = ready.send(Err(message.clone()));
+            Err(message)
+        }
+    }
+}
+
+/// Where FFmpeg might be: `MORE_OF_DOTS_FFMPEG`, beside the app, on `PATH`, or
+/// at the usual places of the Linux host as Wine sees it (drive Z: is `/`).
+fn find_ffmpeg() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(custom) = std::env::var_os("MORE_OF_DOTS_FFMPEG") {
+        candidates.push(custom.into());
+    }
+    if let Some(directory) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        candidates.push(directory.join("ffmpeg.exe"));
+        candidates.push(directory.join("resources/player/ffmpeg.exe"));
+    }
+    for directory in std::env::var_os("PATH").iter().flat_map(std::env::split_paths) {
+        candidates.push(directory.join("ffmpeg.exe"));
+        candidates.push(directory.join("ffmpeg"));
+    }
+    #[cfg(windows)]
+    for host in ["/usr/bin", "/usr/local/bin", "/run/current-system/sw/bin", "/home/linuxbrew/.linuxbrew/bin"] {
+        candidates.push(PathBuf::from(format!("Z:{}\\ffmpeg", host.replace('/', "\\"))));
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+/// Wine starts Linux programs without translating Windows paths in their arguments.
+fn for_ffmpeg(ffmpeg: &Path, path: &Path) -> std::ffi::OsString {
+    let linux_program = ffmpeg.extension().is_none_or(|extension| !extension.eq_ignore_ascii_case("exe"));
+    if !cfg!(windows) || !linux_program {
+        return path.as_os_str().to_owned();
+    }
+    let text = path.to_string_lossy().replace('\\', "/");
+    if let Some(rest) = text.strip_prefix("Z:").or_else(|| text.strip_prefix("z:")) {
+        return rest.into();
+    }
+    match (text.strip_prefix("C:"), std::env::var("WINEPREFIX")) {
+        (Some(rest), Ok(prefix)) => format!("{}/drive_c{rest}", prefix.trim_end_matches('/')).into(),
+        _ => text.into(),
+    }
+}
+
+/// Encodes H.264 with an FFmpeg process fed raw NV12 frames. Audio is collected
+/// as raw PCM and joined in afterwards, so FFmpeg only ever reads one pipe.
+struct FfmpegEncoder {
+    ffmpeg: PathBuf,
+    output: PathBuf,
+    video: PathBuf,
+    pcm: Option<(PathBuf, std::io::BufWriter<std::fs::File>)>,
+    child: std::process::Child,
+    width: usize,
+    height: usize,
+}
+
+impl FfmpegEncoder {
+    fn start(path: &Path, width: u32, height: u32, bitrate: u32, audio: bool) -> Result<Self, String> {
+        use std::process::{Command, Stdio};
+        let ffmpeg = find_ffmpeg().ok_or(
+            "FFmpeg was not found. Put ffmpeg.exe next to More of Dots, install FFmpeg, or set MORE_OF_DOTS_FFMPEG.",
+        )?;
+        let video = if audio { path.with_extension("video.mp4") } else { path.to_path_buf() };
+        let pcm = if audio {
+            let pcm = path.with_extension("pcm");
+            let file = std::fs::File::create(&pcm).map_err(|e| e.to_string())?;
+            Some((pcm, std::io::BufWriter::new(file)))
+        } else {
+            None
+        };
+        let mut command = Command::new(&ffmpeg);
+        command
+            .args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "nv12"])
+            .args(["-s", &format!("{width}x{height}"), "-r", &FRAME_RATE.to_string(), "-i", "pipe:0"])
+            .args(["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p"])
+            .args(["-b:v", &bitrate.to_string()])
+            .args(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"])
+            .args(["-movflags", "+faststart"])
+            .arg(for_ffmpeg(&ffmpeg, &video))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = crate::player::hidden(&mut command)
+            .spawn()
+            .map_err(|e| format!("Could not start FFmpeg ({}): {e}", ffmpeg.display()))?;
+        Ok(Self { ffmpeg, output: path.to_path_buf(), video, pcm, child, width: width as usize, height: height as usize })
+    }
+
+    fn run(&mut self, packets: &Receiver<Packet>) -> Result<u64, String> {
+        use std::io::Write;
+        let mut stdin = self.child.stdin.take().ok_or("Cannot connect to FFmpeg.")?;
+        let mut nv12 = vec![0u8; self.width * self.height * 3 / 2];
+        let mut count = 0u64;
+        let streamed: Result<(), String> = (|| {
+            for packet in packets.iter() {
+                match packet {
+                    Packet::Video(rgb) => {
+                        if rgb.len() != self.width * self.height * 3 {
+                            return Err("A recorded frame has the wrong size.".to_string());
+                        }
+                        rgb_to_nv12(&rgb, self.width, self.height, &mut nv12);
+                        stdin.write_all(&nv12).map_err(|e| format!("Video encoding failed: {e}"))?;
+                        count += 1;
+                    }
+                    Packet::Audio(samples) => {
+                        if let Some((_, pcm)) = self.pcm.as_mut() {
+                            let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+                            pcm.write_all(&bytes).map_err(|e| format!("Audio encoding failed: {e}"))?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })();
+        drop(stdin);
+        if streamed.is_err() {
+            let _ = self.child.kill();
+        }
+        let status = self.child.wait().map_err(|e| e.to_string());
+        let result = streamed.and_then(|()| match status? {
+            status if status.success() || count == 0 => Ok(()),
+            _ => Err("FFmpeg could not encode the video.".to_string()),
+        });
+        let result = result.and_then(|()| if count > 0 { self.add_audio() } else { Ok(()) });
+        self.clean_up();
+        result.map(|()| count)
+    }
+
+    fn add_audio(&mut self) -> Result<(), String> {
+        use std::process::{Command, Stdio};
+        let Some((pcm_path, mut pcm)) = self.pcm.take() else { return Ok(()) };
+        std::io::Write::flush(&mut pcm).map_err(|e| e.to_string())?;
+        drop(pcm);
+        let mut command = Command::new(&self.ffmpeg);
+        command
+            .args(["-y", "-loglevel", "error", "-i"])
+            .arg(for_ffmpeg(&self.ffmpeg, &self.video))
+            .args(["-f", "s16le", "-ar", &AUDIO_RATE.to_string(), "-ac", "2", "-i"])
+            .arg(for_ffmpeg(&self.ffmpeg, &pcm_path))
+            .args(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
+            .arg(for_ffmpeg(&self.ffmpeg, &self.output))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let status = crate::player::hidden(&mut command)
+            .status()
+            .map_err(|e| format!("Could not start FFmpeg ({}): {e}", self.ffmpeg.display()))?;
+        let _ = std::fs::remove_file(&pcm_path);
+        status.success().then_some(()).ok_or_else(|| "FFmpeg could not add the soundtrack.".to_string())
+    }
+
+    fn clean_up(&mut self) {
+        if let Some((pcm_path, _)) = self.pcm.take() {
+            let _ = std::fs::remove_file(pcm_path);
+        }
+        if self.video != self.output {
+            let _ = std::fs::remove_file(&self.video);
+        }
+    }
 }
 
 #[cfg(test)]
