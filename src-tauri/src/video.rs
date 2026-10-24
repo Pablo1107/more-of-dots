@@ -480,11 +480,27 @@ fn for_ffmpeg(ffmpeg: &Path, path: &Path) -> std::ffi::OsString {
     if !cfg!(windows) || !linux_program {
         return path.as_os_str().to_owned();
     }
+    // winepath knows every drive of the prefix, so it is asked first.
+    let mut command = std::process::Command::new("winepath");
+    command.arg("-u").arg(path).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    if let Some(unix) = crate::player::hidden(&mut command)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|unix| unix.trim().to_string())
+        .filter(|unix| unix.starts_with('/'))
+    {
+        return unix.into();
+    }
     let text = path.to_string_lossy().replace('\\', "/");
     if let Some(rest) = text.strip_prefix("Z:").or_else(|| text.strip_prefix("z:")) {
         return rest.into();
     }
-    match (text.strip_prefix("C:"), std::env::var("WINEPREFIX")) {
+    // The default prefix is ~/.wine when WINEPREFIX is unset.
+    let prefix = std::env::var("WINEPREFIX")
+        .or_else(|_| std::env::var("HOME").map(|home| format!("{}/.wine", home.trim_end_matches('/'))));
+    match (text.strip_prefix("C:").or_else(|| text.strip_prefix("c:")), prefix) {
         (Some(rest), Ok(prefix)) => format!("{}/drive_c{rest}", prefix.trim_end_matches('/')).into(),
         _ => text.into(),
     }
@@ -509,13 +525,6 @@ impl FfmpegEncoder {
             "FFmpeg was not found. Put ffmpeg.exe next to More of Dots, install FFmpeg, or set MORE_OF_DOTS_FFMPEG.",
         )?;
         let video = if audio { path.with_extension("video.mp4") } else { path.to_path_buf() };
-        let pcm = if audio {
-            let pcm = path.with_extension("pcm");
-            let file = std::fs::File::create(&pcm).map_err(|e| e.to_string())?;
-            Some((pcm, std::io::BufWriter::new(file)))
-        } else {
-            None
-        };
         let mut command = Command::new(&ffmpeg);
         command
             .args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "nv12"])
@@ -528,9 +537,21 @@ impl FfmpegEncoder {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let child = crate::player::hidden(&mut command)
+        let mut child = crate::player::hidden(&mut command)
             .spawn()
             .map_err(|e| format!("Could not start FFmpeg ({}): {e}", ffmpeg.display()))?;
+        // Created only now, so a failed start leaves nothing behind.
+        let pcm = if audio {
+            let pcm = path.with_extension("pcm");
+            let file = std::fs::File::create(&pcm).map_err(|e| {
+                let _ = child.kill();
+                let _ = child.wait();
+                e.to_string()
+            })?;
+            Some((pcm, std::io::BufWriter::new(file)))
+        } else {
+            None
+        };
         Ok(Self { ffmpeg, output: path.to_path_buf(), video, pcm, child, width: width as usize, height: height as usize })
     }
 
